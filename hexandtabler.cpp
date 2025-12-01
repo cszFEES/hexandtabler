@@ -1,7 +1,7 @@
 #include "hexandtabler.h" 
 #include "ui_hexandtabler.h" 
 
-// Includes esenciales de Qt
+// Essential Qt Includes
 #include <QFileDialog>
 #include <QFile>
 #include <QMessageBox>
@@ -23,30 +23,45 @@
 #include <QFont>
 #include <algorithm>
 #include <cctype> 
+#include <QSignalBlocker> 
+#include <QInputDialog> 
+#include <QTextStream> 
 
-// Include del widget personalizado
+// Custom widget include
 #include "hexeditorarea.h" 
 
-// Constantes
+// Constants
 const char organizationName[] = "FEES"; 
-const char applicationName[] = "hexandtabler"; // hexandtabler en minúsculas
+const char applicationName[] = "hexandtabler"; 
 const int MAX_UNDO_STATES = 50; 
 
 
 // --------------------------------------------------------------------------------
-// --- Funciones Auxiliares (Zoom y About) ---
+// --- Helper Functions (Zoom, About, and Menu Connections) ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::createMenus() {
-    // Las acciones de About, Open, Save y Exit se conectan automáticamente.
+    // About, Open, Save, and Exit actions are connected automatically.
     
-    // Conexión de acciones de Zoom 
+    // Zoom actions connection
     if (ui->actionZoomIn) {
         ui->actionZoomIn->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Plus)); 
         connect(ui->actionZoomIn, &QAction::triggered, this, &hexandtabler::on_actionZoomIn_triggered);
     }
     if (ui->actionZoomOut) {
         connect(ui->actionZoomOut, &QAction::triggered, this, &hexandtabler::on_actionZoomOut_triggered);
+    }
+    // Go To action connection
+    if (ui->actionGoTo) {
+        connect(ui->actionGoTo, &QAction::triggered, this, &hexandtabler::on_actionGoTo_triggered);
+    }
+    
+    // Table actions connection
+    if (ui->actionSaveTable) { 
+        connect(ui->actionSaveTable, &QAction::triggered, this, &hexandtabler::on_actionSaveTable_triggered);
+    }
+    if (ui->actionLoadTable) { 
+        connect(ui->actionLoadTable, &QAction::triggered, this, &hexandtabler::on_actionLoadTable_triggered);
     }
 }
 
@@ -84,7 +99,7 @@ void hexandtabler::on_actionZoomOut_triggered() {
 
 
 // --------------------------------------------------------------------------------
-// --- INICIO DE IMPLEMENTACIONES DE CLASE ---
+// --- START OF CLASS IMPLEMENTATIONS ---
 // --------------------------------------------------------------------------------
 
 
@@ -94,15 +109,17 @@ hexandtabler::hexandtabler(QWidget *parent) :
 {
     ui->setupUi(this);
     
-    // Configuración del área de edición central
+    // Central editing area configuration
     m_hexEditorArea = new HexEditorArea(this);
     setCentralWidget(m_hexEditorArea);
 
-    // Configuración del widget de tabla (Dock Widget)
+    // Table widget configuration (Dock Widget)
     m_conversionTable = new QTableWidget(this); 
     setupConversionTable(); 
     
     m_tableDock = new QDockWidget(tr("Conversion Table (.TBL)"), this); 
+    // Remove title bar buttons (close/float)
+    m_tableDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
     m_tableDock->setWidget(m_conversionTable);
     addDockWidget(Qt::RightDockWidgetArea, m_tableDock);
 
@@ -117,31 +134,45 @@ hexandtabler::hexandtabler(QWidget *parent) :
         connect(undoAct, &QAction::triggered, this, &hexandtabler::on_actionUndo_triggered);
     } 
     if (redoAct) {
+        // FIX: Asegurar que la acción Redo no tenga un estilo de fuente en negrita
+        // Esto sobrescribe cualquier estilo predefinido por el sistema/UI para esta acción.
+        QFont normalFont = redoAct->font();
+        normalFont.setWeight(QFont::Normal);
+        redoAct->setFont(normalFont);
+        
         connect(redoAct, &QAction::triggered, this, &hexandtabler::on_actionRedo_triggered);
     } 
+    
+    // Connect the slot for table item changes
+    connect(m_conversionTable, &QTableWidget::itemChanged, this, &hexandtabler::handleTableItemChanged);
+    
+    // Pass the initial map to the hex editor area
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap); 
+    }
 
     // --- Recent Files Setup ---
     createRecentFileActions();
     loadRecentFiles();
     updateRecentFileActions();
 
-    // Conexiones de Acciones
+    // Action Connections
     connect(ui->actionDarkMode, &QAction::toggled, this, &hexandtabler::on_actionDarkMode_triggered); 
 
-    // Conexiones de Opciones (Tabla)
+    // Options Connections (Table)
     connect(ui->actionToggleTable, &QAction::toggled, m_tableDock, &QDockWidget::setVisible);
     connect(m_tableDock, &QDockWidget::visibilityChanged, ui->actionToggleTable, &QAction::setChecked);
     
-    // Conexión principal del motor de edición con la ventana principal
+    // Main connection of the editing engine with the main window
     connect(m_hexEditorArea, &HexEditorArea::dataChanged, this, &hexandtabler::handleDataEdited); 
     
     updateUndoRedoActions();
     ui->actionSave->setEnabled(false); 
 
-    // Configuración de menús y sub-acciones (Zoom y About)
+    // Menu and sub-action configuration (Zoom and About, Go To, Table)
     createMenus(); 
     
-    // Carga del estado guardado
+    // Load saved state
     QSettings settings(organizationName, applicationName);
     restoreGeometry(settings.value("geometry").toByteArray());
     restoreState(settings.value("windowState").toByteArray());
@@ -152,7 +183,7 @@ hexandtabler::~hexandtabler() {
 }
 
 // --------------------------------------------------------------------------------
-// --- SLOTS DE ARCHIVO ---
+// --- FILE SLOTS ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionOpen_triggered() {
@@ -180,7 +211,7 @@ void hexandtabler::openRecentFile() {
 }
 
 // --------------------------------------------------------------------------------
-// --- SLOTS DE OPCIONES Y EDICIÓN ---
+// --- OPTIONS AND EDIT SLOTS (Dark Mode Fix Here) ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
@@ -189,8 +220,14 @@ void hexandtabler::on_actionDarkMode_triggered(bool checked) {
         darkPalette.setColor(QPalette::Window, QColor(53, 53, 53));
         darkPalette.setColor(QPalette::WindowText, Qt::white);
         darkPalette.setColor(QPalette::Base, QColor(25, 25, 25)); 
-        darkPalette.setColor(QPalette::Text, Qt::white);
+        darkPalette.setColor(QPalette::AlternateBase, QColor(66, 66, 66)); 
+        darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
+        darkPalette.setColor(QPalette::ToolTipText, Qt::white);
+        darkPalette.setColor(QPalette::Text, Qt::white); // CLAVE: Texto blanco para ser legible
+        darkPalette.setColor(QPalette::Button, QColor(53, 53, 53));
         darkPalette.setColor(QPalette::ButtonText, Qt::white);
+        darkPalette.setColor(QPalette::BrightText, Qt::red);
+        darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
         darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
         darkPalette.setColor(QPalette::HighlightedText, Qt::black);
 
@@ -198,10 +235,14 @@ void hexandtabler::on_actionDarkMode_triggered(bool checked) {
     } else {
         qApp->setPalette(QApplication::style()->standardPalette());
     }
+    // Forzamos la actualización del hex editor para usar los nuevos colores de la paleta
+    if (m_hexEditorArea) {
+        m_hexEditorArea->viewport()->update();
+    }
 }
 
 void hexandtabler::on_actionToggleTable_triggered() {
-    // El toggle ya está conectado al dock widget en el constructor
+    // The toggle is already connected to the dock widget in the constructor
 }
 
 void hexandtabler::on_actionUndo_triggered() {
@@ -232,46 +273,225 @@ void hexandtabler::on_actionRedo_triggered() {
     ui->actionSave->setEnabled(true);
 }
 
+void hexandtabler::on_actionGoTo_triggered() {
+    bool ok;
+    // Request the hex address to jump to. QInputDialog::getText is modal and closes itself.
+    QString hexOffsetStr = QInputDialog::getText(this, tr("Go to Offset"),
+                                                tr("Enter hexadecimal offset (e.g., 1A0):"), QLineEdit::Normal,
+                                                "", &ok);
+    
+    if (ok && !hexOffsetStr.isEmpty()) {
+        bool conversionOk;
+        // Convert the string to a long long integer (base 16)
+        quint64 offset = hexOffsetStr.toULongLong(&conversionOk, 16);
+        
+        if (conversionOk && m_hexEditorArea) {
+            m_hexEditorArea->goToOffset(offset);
+        } else {
+            QMessageBox::warning(this, tr("Invalid Input"), tr("Invalid hexadecimal offset entered."));
+        }
+    }
+}
+
+
 void hexandtabler::handleDataEdited() {
     pushUndoState(); 
     m_isModified = true;
     ui->actionSave->setEnabled(true);
 }
 
+// Slot to handle table changes and update the character map
+void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
+    // We are only interested in changes in the second column (index 1)
+    if (item->column() != 1) {
+        return; 
+    }
+    
+    int byteValue = item->row();
+    QString newChar = item->text();
+    
+    // The map only supports single characters for display
+    QString displayChar = newChar.left(1); 
+
+    // Update the map storage
+    m_charMap[byteValue] = displayChar;
+    
+    // Ensure the table item itself only shows one character
+    if (newChar != displayChar) {
+        // Block signals to prevent recursive calls
+        QSignalBlocker blocker(m_conversionTable);
+        item->setText(displayChar);
+    }
+    
+    // Notify the hex editor to redraw with the new map
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+}
+
 // --------------------------------------------------------------------------------
-// --- FUNCIONES DE LÓGICA Y ASISTENCIA ---
+// --- TABLE SLOTS AND HELPERS (.TBL) ---
+// --------------------------------------------------------------------------------
+
+void hexandtabler::on_actionSaveTable_triggered() {
+    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Conversion Table"), "", tr("Table Files (*.tbl);;All Files (*.*)"));
+    if (!filePath.isEmpty()) {
+        saveTableFile(filePath);
+    }
+}
+
+void hexandtabler::on_actionLoadTable_triggered() {
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Load Conversion Table"), "", tr("Table Files (*.tbl);;All Files (*.*)"));
+    if (!filePath.isEmpty()) {
+        loadTableFile(filePath);
+    }
+}
+
+bool hexandtabler::saveTableFile(const QString &filePath) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, tr("Save Error"), tr("Cannot open file for writing: ") + file.errorString());
+        return false;
+    }
+    
+    QTextStream out(&file);
+
+    // Save map content: XX=C format (256 entries)
+    for (int i = 0; i < 256; ++i) {
+        // Hex byte (00 to FF)
+        QString hexByte = QString("%1").arg(i, 2, 16, QChar('0')).toUpper(); 
+        
+        // Character (use the stored one, default is '.')
+        QString charValue = m_charMap[i].isEmpty() ? "." : m_charMap[i];
+
+        // Write: 00=. or 41=A
+        out << hexByte << "=" << charValue << "\n";
+    }
+
+    file.close();
+    QMessageBox::information(this, tr("Success"), tr("Conversion table saved successfully."));
+    return true;
+}
+
+bool hexandtabler::loadTableFile(const QString &filePath) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, tr("Load Error"), tr("Cannot open file for reading: ") + file.errorString());
+        return false;
+    }
+
+    QTextStream in(&file);
+    QString newMap[256];
+    bool mapChanged = false;
+
+    // 1. Initialize newMap with DEFAULTS (printable ASCII or dot)
+    // This ensures a full overwrite behavior, resetting custom entries not in the file.
+    for (int i = 0; i < 256; ++i) {
+        char c = (char)i;
+        bool isSafePrint = (i >= 0x20 && i <= 0x7E);
+        newMap[i] = isSafePrint ? QString(c) : QString(".");
+    }
+    
+    // Parse the file line by line, overwriting defaults in newMap
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith('#')) continue; 
+
+        int equalsIndex = line.indexOf('=');
+        if (equalsIndex > 0) {
+            QString hexStr = line.left(equalsIndex).trimmed();
+            QString charStr = line.mid(equalsIndex + 1).trimmed();
+            
+            bool ok;
+            int byteValue = hexStr.toInt(&ok, 16); 
+
+            if (ok && byteValue >= 0 && byteValue <= 255) {
+                // We only care about the first character of the string
+                QString displayChar = charStr.left(1);
+                if (displayChar.isEmpty()) displayChar = "."; 
+                
+                // If the value read from the file is different from what we currently have in m_charMap
+                if (m_charMap[byteValue] != displayChar) { 
+                    newMap[byteValue] = displayChar;
+                    mapChanged = true;
+                }
+            }
+        }
+    }
+    
+    file.close();
+
+    // Check if any change occurred during parsing
+    if (!mapChanged) { 
+        QMessageBox::information(this, tr("Load Warning"), tr("The loaded table is identical to the current one. No changes applied."));
+        return true; 
+    }
+
+    // Apply the new map (defaults + file content) to the internal storage and the table widget
+    for (int i = 0; i < 256; ++i) {
+        m_charMap[i] = newMap[i];
+
+        // Update the QTableWidget
+        if (m_conversionTable && m_conversionTable->item(i, 1)) {
+            QSignalBlocker blocker(m_conversionTable);
+            m_conversionTable->item(i, 1)->setText(m_charMap[i]);
+        }
+    }
+    
+    // Notify the hex editor to redraw with the new map
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+
+    QMessageBox::information(this, tr("Success"), tr("Conversion table loaded successfully and overwrote the current map."));
+    return true;
+}
+
+// --------------------------------------------------------------------------------
+// --- LOGIC AND ASSISTANCE FUNCTIONS (Existing Code Below) ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::setupConversionTable() {
     if (!m_conversionTable) return;
     
     m_conversionTable->setRowCount(256);
-    m_conversionTable->setColumnCount(3);
+    // Set 2 columns (Hex and Assigned)
+    m_conversionTable->setColumnCount(2);
     
     QStringList headers;
-    headers << tr("Hex") << tr("Dec") << tr("ASCII"); 
+    headers << tr("Hex") << tr("Assigned"); 
     m_conversionTable->setHorizontalHeaderLabels(headers);
     
     m_conversionTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     m_conversionTable->verticalHeader()->setVisible(false);
-    m_conversionTable->setEditTriggers(QAbstractItemView::NoEditTriggers); 
+    
+    // Allow editing on single click (selection) and key press
+    m_conversionTable->setEditTriggers(QAbstractItemView::SelectedClicked | QAbstractItemView::AnyKeyPressed); 
+
+    // Get table font and ensure it is normal weight
+    QFont normalFont = m_conversionTable->font();
+    normalFont.setWeight(QFont::Normal);
 
     for (int i = 0; i < 256; ++i) {
         QTableWidgetItem *hexItem = new QTableWidgetItem(QString("%1").arg(i, 2, 16, QChar('0')).toUpper());
         hexItem->setTextAlignment(Qt::AlignCenter);
-        m_conversionTable->setItem(i, 0, hexItem);
-
-        QTableWidgetItem *decItem = new QTableWidgetItem(QString::number(i));
-        decItem->setTextAlignment(Qt::AlignCenter);
-        m_conversionTable->setItem(i, 1, decItem);
+        // Prevent editing of Hex column
+        hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable); 
+        hexItem->setFont(normalFont); // Apply normal weight
+        m_conversionTable->setItem(i, 0, hexItem); // Column 0: Hex
 
         char c = (char)i;
-        // Solución a las 'comas': usar un punto para caracteres no imprimibles.
+        // Default: dot for non-printable characters, standard char for ASCII
         bool isSafePrint = (i >= 0x20 && i <= 0x7E);
         QString asciiChar = isSafePrint ? QString(c) : QString("."); 
+        
         QTableWidgetItem *asciiItem = new QTableWidgetItem(asciiChar);
         asciiItem->setTextAlignment(Qt::AlignCenter);
-        m_conversionTable->setItem(i, 2, asciiItem);
+        asciiItem->setFont(normalFont); // Apply normal weight
+        m_conversionTable->setItem(i, 1, asciiItem); // Column 1: Assigned
+        
+        // Initialize the internal map with the default value
+        m_charMap[i] = asciiChar;
     }
 }
 
@@ -349,6 +569,7 @@ bool hexandtabler::maybeSave() {
 }
 
 void hexandtabler::refreshModelFromArea() {
+    // Get the latest data from the editor widget
     m_fileData = m_hexEditorArea->hexData(); 
 }
 
@@ -391,10 +612,6 @@ void hexandtabler::closeEvent(QCloseEvent *event) {
         event->ignore();
     }
 }
-
-// --------------------------------------------------------------------------------
-// --- Implementaciones de Archivos Recientes ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::createRecentFileActions() {
     for (int i = 0; i < MaxRecentFiles; ++i) {

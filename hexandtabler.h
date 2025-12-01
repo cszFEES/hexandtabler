@@ -5,6 +5,8 @@
 #include <QByteArray>
 #include <QList>
 #include <QAction>
+#include <QString> 
+#include <QTableWidgetItem> 
 
 // Forward declarations
 class HexEditorArea;
@@ -32,7 +34,7 @@ private slots:
     void on_actionExit_triggered();
     void on_actionAbout_triggered();
     
-    void on_actionDarkMode_triggered(bool checked);
+    void on_actionDarkMode_triggered(bool checked); 
     void on_actionToggleTable_triggered();
     
     void on_actionUndo_triggered();
@@ -41,7 +43,14 @@ private slots:
     void on_actionZoomIn_triggered();
     void on_actionZoomOut_triggered();
     
+    void on_actionGoTo_triggered(); 
+    
+    // --- SLOTS PARA TABLA ---
+    void on_actionSaveTable_triggered();
+    void on_actionLoadTable_triggered();
+
     void handleDataEdited();
+    void handleTableItemChanged(QTableWidgetItem *item);
     void openRecentFile();
 
 private:
@@ -60,13 +69,16 @@ private:
     QAction *undoAct = nullptr;
     QAction *redoAct = nullptr;
 
+    // Table Mapping
+    QString m_charMap[256]; 
+
     // Recent Files
     enum { MaxRecentFiles = 5 };
     QAction *recentFileActions[MaxRecentFiles];
 
 
     void setupConversionTable();
-    void createMenus(); // Para conectar las acciones de Zoom y About
+    void createMenus(); 
     
     void loadFile(const QString &filePath);
     bool saveCurrentFile();
@@ -75,6 +87,10 @@ private:
     void refreshModelFromArea(); 
     void pushUndoState();
     void updateUndoRedoActions();
+    
+    // --- FUNCIONES DE TABLA ---
+    bool saveTableFile(const QString &filePath);
+    bool loadTableFile(const QString &filePath);
     
     // Recent Files Helpers
     void createRecentFileActions();

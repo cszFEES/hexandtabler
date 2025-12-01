@@ -4,23 +4,22 @@ project(hexandtabler)
 
 set(CMAKE_CXX_STANDARD 11)
 
-# Habilitar el MOC automático para que maneje Q_OBJECT 
+# Enable automatic MOC handling for Q_OBJECT
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt5Widgets REQUIRED)
 
-# Genera ui_hexandtabler.h a partir del archivo .ui
+# Generate ui_hexandtabler.h from the .ui file
 qt5_wrap_ui(UI_HEADERS hexandtabler.ui)
 
-# Definir el ejecutable
-# ¡CORRECCIÓN CLAVE! Añadir hexeditorarea.cpp para que el enlazador encuentre las implementaciones.
+# Define the executable
 add_executable(hexandtabler main.cpp hexandtabler.cpp hexeditorarea.cpp ${UI_HEADERS})
 
-# Agregar el directorio de compilación (build directory) a las rutas de inclusión para encontrar ui_hexandtabler.h
+# Add the build directory to include paths to find ui_hexandtabler.h
 target_include_directories(hexandtabler PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-# Añadir el directorio fuente (donde está hexeditorarea.h) a las rutas de inclusión.
+# Add the source directory (where hexeditorarea.h is) to include paths
 target_include_directories(hexandtabler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Enlazar con las librerías de Qt
+# Link with Qt libraries
 target_link_libraries(hexandtabler Qt5::Widgets)
