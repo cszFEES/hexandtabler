@@ -26,6 +26,7 @@
 #include <QSignalBlocker> 
 #include <QInputDialog> 
 #include <QTextStream> 
+#include <QModelIndexList> 
 
 // Custom widget include
 #include "hexeditorarea.h" 
@@ -56,21 +57,45 @@ void hexandtabler::createMenus() {
         connect(ui->actionGoTo, &QAction::triggered, this, &hexandtabler::on_actionGoTo_triggered);
     }
     
-    // Table actions connection
-    if (ui->actionSaveTable) { 
-        connect(ui->actionSaveTable, &QAction::triggered, this, &hexandtabler::on_actionSaveTable_triggered);
+    // File actions connection (RESTAURADO)
+    if (ui->actionSaveAs) { 
+        connect(ui->actionSaveAs, &QAction::triggered, this, &hexandtabler::on_actionSaveAs_triggered);
+    }
+    
+    // Table actions connection (RESTAURADO)
+    if (ui->actionToggleTable) { 
+        connect(ui->actionToggleTable, &QAction::triggered, this, &hexandtabler::on_actionToggleTable_triggered);
     }
     if (ui->actionLoadTable) { 
         connect(ui->actionLoadTable, &QAction::triggered, this, &hexandtabler::on_actionLoadTable_triggered);
+    }
+    if (ui->actionSaveTable) { 
+        connect(ui->actionSaveTable, &QAction::triggered, this, &hexandtabler::on_actionSaveTable_triggered);
+    }
+    if (ui->actionSaveTableAs) { 
+        connect(ui->actionSaveTableAs, &QAction::triggered, this, &hexandtabler::on_actionSaveTableAs_triggered);
+    }
+    
+    // New Insert Series connections (RESTAURADO)
+    if (ui->actionInsertLatinUpper) {
+        connect(ui->actionInsertLatinUpper, &QAction::triggered, this, &hexandtabler::on_actionInsertLatinUpper_triggered);
+    }
+    if (ui->actionInsertLatinLower) {
+        connect(ui->actionInsertLatinLower, &QAction::triggered, this, &hexandtabler::on_actionInsertLatinLower_triggered);
+    }
+    if (ui->actionInsertHiragana) {
+        connect(ui->actionInsertHiragana, &QAction::triggered, this, &hexandtabler::on_actionInsertHiragana_triggered);
+    }
+    if (ui->actionInsertKatakana) {
+        connect(ui->actionInsertKatakana, &QAction::triggered, this, &hexandtabler::on_actionInsertKatakana_triggered);
     }
 }
 
 
 void hexandtabler::on_actionAbout_triggered() {
-    QMessageBox::about(this, tr(" %1").arg(applicationName),
-        tr("<h2>%1</h2>"
-           "Author: **FEES**")
-           .arg(applicationName)
+    // Mantiene la última modificación: Título solo "hexandtabler" y contenido solo "Author: **FEES**"
+    QMessageBox::about(this, applicationName,
+        tr("Author: **FEES**")
     );
 }
 
@@ -125,6 +150,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
 
     setWindowTitle(applicationName); 
     m_fileData.clear(); 
+    m_currentTablePath.clear(); // Initialize new member
     
     // --- Undo/Redo and Edit Menu Configuration ---
     undoAct = ui->actionUndo; 
@@ -134,8 +160,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
         connect(undoAct, &QAction::triggered, this, &hexandtabler::on_actionUndo_triggered);
     } 
     if (redoAct) {
-        // FIX: Asegurar que la acción Redo no tenga un estilo de fuente en negrita
-        // Esto sobrescribe cualquier estilo predefinido por el sistema/UI para esta acción.
+        // Fix: Ensure the Redo action does not have a bold font style (user request fix)
         QFont normalFont = redoAct->font();
         normalFont.setWeight(QFont::Normal);
         redoAct->setFont(normalFont);
@@ -183,7 +208,7 @@ hexandtabler::~hexandtabler() {
 }
 
 // --------------------------------------------------------------------------------
-// --- FILE SLOTS ---
+// --- FILE SLOTS AND HELPERS ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionOpen_triggered() {
@@ -196,7 +221,64 @@ void hexandtabler::on_actionOpen_triggered() {
 }
 
 void hexandtabler::on_actionSave_triggered() {
+    if (m_currentFilePath.isEmpty()) {
+        on_actionSaveAs_triggered(); // If no path, trigger Save As...
+        return;
+    }
     saveCurrentFile();
+}
+
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionSaveAs_triggered() {
+    saveFileAs();
+}
+
+// DEFINICIÓN RESTAURADA
+bool hexandtabler::saveFileAs() {
+    // Show a file dialog to choose a path
+    QString fileName = QFileDialog::getSaveFileName(this, 
+                                                    tr("Save File As"), 
+                                                    m_currentFilePath.isEmpty() ? QDir::homePath() : QFileInfo(m_currentFilePath).absoluteDir().path(), 
+                                                    tr("All Files (*.*)"));
+    
+    if (fileName.isEmpty()) {
+        return false; // User cancelled the dialog
+    }
+    
+    // Attempt to save the data to the chosen file
+    if (saveDataToFile(fileName)) {
+        m_currentFilePath = fileName; // Update the current file path
+        setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(m_currentFilePath).fileName()));
+        prependToRecentFiles(m_currentFilePath);
+        return true;
+    }
+    return false;
+}
+
+// DEFINICIÓN RESTAURADA
+bool hexandtabler::saveDataToFile(const QString &filePath) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        QMessageBox::warning(this, tr("hexandtabler"),
+                             tr("Cannot write file %1:\n%2.")
+                             .arg(QDir::toNativeSeparators(filePath), file.errorString()));
+        return false;
+    }
+
+    refreshModelFromArea(); // Ensure m_fileData is up to date
+
+    qint64 bytesWritten = file.write(m_fileData);
+    file.close();
+
+    if (bytesWritten != m_fileData.size()) {
+        QMessageBox::warning(this, tr("hexandtabler"),
+                             tr("Error saving data to file: bytes written mismatch."));
+        return false;
+    }
+
+    m_isModified = false;
+    ui->actionSave->setEnabled(false);
+    return true;
 }
 
 void hexandtabler::on_actionExit_triggered() {
@@ -211,7 +293,7 @@ void hexandtabler::openRecentFile() {
 }
 
 // --------------------------------------------------------------------------------
-// --- OPTIONS AND EDIT SLOTS (Dark Mode Fix Here) ---
+// --- OPTIONS AND EDIT SLOTS ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
@@ -223,7 +305,7 @@ void hexandtabler::on_actionDarkMode_triggered(bool checked) {
         darkPalette.setColor(QPalette::AlternateBase, QColor(66, 66, 66)); 
         darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
         darkPalette.setColor(QPalette::ToolTipText, Qt::white);
-        darkPalette.setColor(QPalette::Text, Qt::white); // CLAVE: Texto blanco para ser legible
+        darkPalette.setColor(QPalette::Text, Qt::white); 
         darkPalette.setColor(QPalette::Button, QColor(53, 53, 53));
         darkPalette.setColor(QPalette::ButtonText, Qt::white);
         darkPalette.setColor(QPalette::BrightText, Qt::red);
@@ -235,14 +317,17 @@ void hexandtabler::on_actionDarkMode_triggered(bool checked) {
     } else {
         qApp->setPalette(QApplication::style()->standardPalette());
     }
-    // Forzamos la actualización del hex editor para usar los nuevos colores de la paleta
+    // Force the hex editor to update to use the new palette colors
     if (m_hexEditorArea) {
         m_hexEditorArea->viewport()->update();
     }
 }
 
 void hexandtabler::on_actionToggleTable_triggered() {
-    // The toggle is already connected to the dock widget in the constructor
+    // Toggles the visibility of the dock widget
+    if (m_tableDock) {
+        m_tableDock->setVisible(!m_tableDock->isVisible());
+    }
 }
 
 void hexandtabler::on_actionUndo_triggered() {
@@ -334,16 +419,42 @@ void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionSaveTable_triggered() {
-    QString filePath = QFileDialog::getSaveFileName(this, tr("Save Conversion Table"), "", tr("Table Files (*.tbl);;All Files (*.*)"));
-    if (!filePath.isEmpty()) {
-        saveTableFile(filePath);
+    // If a path is already saved, use it. Otherwise, trigger Save As...
+    if (m_currentTablePath.isEmpty()) {
+        on_actionSaveTableAs_triggered();
+        return;
+    }
+    saveTableFile(m_currentTablePath);
+}
+
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionSaveTableAs_triggered() {
+    // The filter defaults to *.tbl and is the first option
+    QString fileName = QFileDialog::getSaveFileName(this, 
+                                                    tr("Save Conversion Table As"), 
+                                                    QDir::homePath(), 
+                                                    tr("Conversion Table Files (*.tbl);;All Files (*)"));
+    
+    if (fileName.isEmpty()) {
+        return; // User cancelled
+    }
+    
+    // Ensure the file has the correct extension if the user didn't specify a filter
+    if (!fileName.toLower().endsWith(".tbl")) {
+        fileName += ".tbl";
+    }
+    
+    if (saveTableFile(fileName)) {
+        m_currentTablePath = fileName; // Update the current table path
     }
 }
 
 void hexandtabler::on_actionLoadTable_triggered() {
     QString filePath = QFileDialog::getOpenFileName(this, tr("Load Conversion Table"), "", tr("Table Files (*.tbl);;All Files (*.*)"));
     if (!filePath.isEmpty()) {
-        loadTableFile(filePath);
+        if (loadTableFile(filePath)) {
+            m_currentTablePath = filePath; // Update the current table path on successful load
+        }
     }
 }
 
@@ -382,10 +493,8 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
 
     QTextStream in(&file);
     QString newMap[256];
-    bool mapChanged = false;
-
+    
     // 1. Initialize newMap with DEFAULTS (printable ASCII or dot)
-    // This ensures a full overwrite behavior, resetting custom entries not in the file.
     for (int i = 0; i < 256; ++i) {
         char c = (char)i;
         bool isSafePrint = (i >= 0x20 && i <= 0x7E);
@@ -410,31 +519,85 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
                 QString displayChar = charStr.left(1);
                 if (displayChar.isEmpty()) displayChar = "."; 
                 
-                // If the value read from the file is different from what we currently have in m_charMap
-                if (m_charMap[byteValue] != displayChar) { 
-                    newMap[byteValue] = displayChar;
-                    mapChanged = true;
-                }
+                newMap[byteValue] = displayChar;
             }
         }
     }
     
     file.close();
 
-    // Check if any change occurred during parsing
+    // Apply the new map (defaults + file content) to the internal storage and the table widget
+    bool mapChanged = false;
+    for (int i = 0; i < 256; ++i) {
+        if (m_charMap[i] != newMap[i]) {
+            m_charMap[i] = newMap[i];
+            mapChanged = true;
+
+            // Update the QTableWidget
+            if (m_conversionTable && m_conversionTable->item(i, 1)) {
+                QSignalBlocker blocker(m_conversionTable);
+                m_conversionTable->item(i, 1)->setText(m_charMap[i]);
+            }
+        }
+    }
+    
     if (!mapChanged) { 
         QMessageBox::information(this, tr("Load Warning"), tr("The loaded table is identical to the current one. No changes applied."));
         return true; 
     }
 
-    // Apply the new map (defaults + file content) to the internal storage and the table widget
-    for (int i = 0; i < 256; ++i) {
-        m_charMap[i] = newMap[i];
+    // Notify the hex editor to redraw with the new map
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
 
-        // Update the QTableWidget
-        if (m_conversionTable && m_conversionTable->item(i, 1)) {
-            QSignalBlocker blocker(m_conversionTable);
-            m_conversionTable->item(i, 1)->setText(m_charMap[i]);
+    QMessageBox::information(this, tr("Success"), tr("Conversion table loaded successfully and overwritten the current map."));
+    return true;
+}
+
+// --- SERIES INSERTION IMPLEMENTATION (RESTAURADO) ---
+
+void hexandtabler::insertSeries(const QList<QString> &series) {
+    if (!m_conversionTable || series.isEmpty()) return;
+
+    // Get the starting row (top-left selected cell's row, or 0 if nothing selected)
+    QModelIndexList selectedIndexes = m_conversionTable->selectionModel()->selectedIndexes();
+    int startRow = 0;
+    if (!selectedIndexes.isEmpty()) {
+        // Find the index with the smallest row number (top-most selected cell)
+        startRow = selectedIndexes.first().row(); 
+        for (const QModelIndex &index : selectedIndexes) {
+            startRow = std::min(startRow, index.row());
+        }
+    }
+    
+    // Ensure startRow is within bounds [0, 255]
+    if (startRow < 0) startRow = 0;
+    if (startRow >= 256) {
+        QMessageBox::warning(this, tr("Insertion Error"), tr("Selected row is out of bounds for the table."));
+        return;
+    }
+
+    // Block signals to prevent recursive calls from handleTableItemChanged
+    QSignalBlocker blocker(m_conversionTable);
+    
+    // Iterate through the series and update the map and table
+    for (int i = 0; i < series.size(); ++i) {
+        int currentRow = startRow + i;
+        if (currentRow > 255) break;
+
+        const QString &displayChar = series[i];
+        
+        // 1. Update internal map
+        // Ensure only the first character is stored for mapping consistency
+        QString charToStore = displayChar.left(1); 
+        if (charToStore.isEmpty()) charToStore = ".";
+        m_charMap[currentRow] = charToStore;
+        
+        // 2. Update QTableWidget
+        QTableWidgetItem *item = m_conversionTable->item(currentRow, 1);
+        if (item) {
+            item->setText(charToStore);
         }
     }
     
@@ -442,9 +605,48 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
     if (m_hexEditorArea) {
         m_hexEditorArea->setCharMapping(m_charMap);
     }
+}
 
-    QMessageBox::information(this, tr("Success"), tr("Conversion table loaded successfully and overwrote the current map."));
-    return true;
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionInsertLatinUpper_triggered() {
+    QList<QString> series;
+    for (int i = 0; i < 26; ++i) { // 'A' (65) to 'Z' (90)
+        series.append(QString(QChar('A' + i)));
+    }
+    insertSeries(series);
+}
+
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionInsertLatinLower_triggered() {
+    QList<QString> series;
+    for (int i = 0; i < 26; ++i) { // 'a' (97) to 'z' (122)
+        series.append(QString(QChar('a' + i)));
+    }
+    insertSeries(series);
+}
+
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionInsertHiragana_triggered() {
+    QList<QString> series;
+    // Hiragana basic set from U+3041 (あ) for 50 characters
+    const int startCode = 0x3041; 
+    const int count = 50; 
+    for (int i = 0; i < count; ++i) {
+        series.append(QString(QChar(startCode + i)));
+    }
+    insertSeries(series);
+}
+
+// DEFINICIÓN RESTAURADA
+void hexandtabler::on_actionInsertKatakana_triggered() {
+    QList<QString> series;
+    // Katakana basic set from U+30A1 (ア) for 50 characters
+    const int startCode = 0x30A1;
+    const int count = 50; 
+    for (int i = 0; i < count; ++i) {
+        series.append(QString(QChar(startCode + i)));
+    }
+    insertSeries(series);
 }
 
 // --------------------------------------------------------------------------------
@@ -519,36 +721,14 @@ void hexandtabler::loadFile(const QString &filePath) {
     ui->actionSave->setEnabled(false);
 }
 
+// DEFINICIÓN RESTAURADA
 bool hexandtabler::saveCurrentFile() {
-    if (m_currentFilePath.isEmpty()) {
-        QString newPath = QFileDialog::getSaveFileName(this, tr("Save File"), "", tr("All Files (*.*)"));
-        if (newPath.isEmpty()) {
-            return false;
-        }
-        m_currentFilePath = newPath;
+    // If we have a path, call the helper to save.
+    if (!m_currentFilePath.isEmpty()) {
+        return saveDataToFile(m_currentFilePath);
     }
-    
-    QFile file(m_currentFilePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(this, tr("Save Error"), tr("Cannot open file for writing: ") + file.errorString());
-        return false;
-    }
-
-    refreshModelFromArea(); 
-
-    qint64 bytesWritten = file.write(m_fileData); 
-    file.close();
-
-    if (bytesWritten == m_fileData.size()) { 
-        setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(m_currentFilePath).fileName()));
-        m_isModified = false;
-        ui->actionSave->setEnabled(false);
-        prependToRecentFiles(m_currentFilePath);
-        return true;
-    } else {
-        QMessageBox::critical(this, tr("Write Error"), tr("Failed to write all data to the file."));
-        return false;
-    }
+    // If no path, trigger Save As... dialog.
+    return saveFileAs();
 }
 
 bool hexandtabler::maybeSave() {

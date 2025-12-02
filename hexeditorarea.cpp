@@ -50,6 +50,7 @@ void HexEditorArea::calculateMetrics() {
     const int HEX_START_SLOT = OFFSET_SLOTS;
     const int HEX_BLOCK_SLOTS = m_bytesPerLine * HEX_SLOTS_PER_BYTE; 
     
+    // CORRECCIÓN: Cambiado de HEX_START_SLOTS a HEX_START_SLOT
     const int ASCII_START_SLOT = HEX_START_SLOT + HEX_BLOCK_SLOTS + SEPARATOR_SLOTS;
     const int TOTAL_SLOTS = ASCII_START_SLOT + m_bytesPerLine; 
     
@@ -246,28 +247,40 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
                 }
                 
                 m_data[byteIndex] = byte;
-                // Note: The original implementation had pastePos++ inside the loop without checking nibble.
-                // The correct logic for byte-by-byte paste in hex mode:
-                // - If high nibble (nibble 0): pastePos++ (moves to low nibble)
-                // - If low nibble (nibble 1): pastePos++ (moves past the byte) -> Now set to pastePos += 2
             }
             
         } 
-        // --- 2. Handle ASCII Mode Paste ---
+        // --- 2. Handle ASCII Mode Paste (CORREGIDO y usando m_charMap) ---
         else if (m_editMode == AsciiMode) {
+            
             for (QChar charPressed : textToPaste) {
                 if (currentByteIndex >= m_data.size()) {
                     break; // Stop if we run out of space (only overwriting)
                 }
                 
-                if (charPressed.isPrint()) {
-                    char asciiValue = charPressed.toLatin1();
-                    m_data[currentByteIndex] = asciiValue;
+                // CORRECCIÓN: Usar la conversión implícita de QChar a QString.
+                QString charStr = charPressed; 
+                int byteValueToWrite = -1;
+                
+                // Buscar el carácter pegado en el mapa de conversión
+                for (int i = 0; i < 256; ++i) {
+                    if (m_charMap[i] == charStr) { 
+                        byteValueToWrite = i;
+                        break;
+                    }
                 }
-                // Advance to the next byte position 
+
+                if (byteValueToWrite != -1) {
+                    // Si se encuentra una coincidencia, escribir el valor del byte correspondiente
+                    m_data[currentByteIndex] = (char)byteValueToWrite;
+                } else {
+                    // Si el carácter no está mapeado, se salta/ignora, manteniendo el byte actual
+                }
+
+                // Siempre avanzar a la siguiente posición de byte
                 currentByteIndex++;
             }
-            // Update the cursor position based on the last modified byte
+            // Actualizar la posición del cursor
             pastePos = currentByteIndex * 2; 
         }
 
@@ -356,24 +369,27 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
                     emit dataChanged();
                     // FIX: Después de editar el nibble bajo, saltar al inicio del siguiente byte.
                     setCursorPosition(m_cursorPos + 1); 
-                    // El setCursorPosition() lo forzará a ser un índice par si es necesario, 
-                    // pero para la edición continua, permitimos que avance 1 y luego
-                    // forzamos la alineación en setCursorPosition.
                     return;
                 }
             }
         }
         
+        // --- Handle ASCII Mode Typing (CORREGIDO y usando m_charMap) ---
         if (m_editMode == AsciiMode) {
-            if (charPressed.isPrint()) {
-                char asciiValue = charPressed.toLatin1();
-                
-                m_data[byteIndex] = asciiValue;
-                emit dataChanged();
-                
-                setCursorPosition(m_cursorPos + 2); // Move to the next byte
-                return; 
+            // CORRECCIÓN: Usar la conversión implícita de QChar a QString.
+            QString charStr = charPressed; 
+
+            for (int i = 0; i < 256; ++i) {
+                // Si el carácter está en el mapa, escribimos el byte (i) correspondiente
+                if (m_charMap[i] == charStr) { 
+                    m_data[byteIndex] = (char)i;
+                    emit dataChanged();
+                    setCursorPosition(m_cursorPos + 2); // Mover al siguiente byte
+                    return;
+                }
             }
+            // Si el carácter no se encuentra en el mapa, ignorar la pulsación de tecla.
+            return;
         }
     }
 
@@ -442,8 +458,6 @@ void HexEditorArea::mousePressEvent(QMouseEvent *event) {
         int relX = colX - m_hexStartCol;
         int charIndex = relX / m_charWidth; 
         byteInLine = charIndex / 3; 
-        
-        // int nibbleInByte = (charIndex % 3 == 0) ? 0 : 1; // Ya no se usa para el cursor
         
         // Forzar cursor al inicio del byte (nibble par)
         int newPos = (offset + byteInLine) * 2;

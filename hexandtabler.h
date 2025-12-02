@@ -7,6 +7,8 @@
 #include <QAction>
 #include <QString> 
 #include <QTableWidgetItem> 
+#include <QCloseEvent>
+#include <QModelIndexList> 
 
 // Forward declarations
 class HexEditorArea;
@@ -31,11 +33,11 @@ protected:
 private slots:
     void on_actionOpen_triggered();
     void on_actionSave_triggered();
+    void on_actionSaveAs_triggered(); // Restaurado
     void on_actionExit_triggered();
     void on_actionAbout_triggered();
     
     void on_actionDarkMode_triggered(bool checked); 
-    void on_actionToggleTable_triggered();
     
     void on_actionUndo_triggered();
     void on_actionRedo_triggered();
@@ -45,9 +47,17 @@ private slots:
     
     void on_actionGoTo_triggered(); 
     
-    // --- SLOTS PARA TABLA ---
-    void on_actionSaveTable_triggered();
+    // --- TABLE SLOTS ---
+    void on_actionToggleTable_triggered(); 
     void on_actionLoadTable_triggered();
+    void on_actionSaveTable_triggered();
+    void on_actionSaveTableAs_triggered(); // Restaurado
+
+    // --- SERIES INSERTION SLOTS ---
+    void on_actionInsertLatinUpper_triggered(); // Restaurado
+    void on_actionInsertLatinLower_triggered(); // Restaurado
+    void on_actionInsertHiragana_triggered(); // Restaurado
+    void on_actionInsertKatakana_triggered(); // Restaurado
 
     void handleDataEdited();
     void handleTableItemChanged(QTableWidgetItem *item);
@@ -61,6 +71,7 @@ private:
 
     QByteArray m_fileData;
     QString m_currentFilePath;
+    QString m_currentTablePath; // Restaurado
     bool m_isModified = false;
     
     // Undo/Redo
@@ -81,6 +92,8 @@ private:
     void createMenus(); 
     
     void loadFile(const QString &filePath);
+    bool saveDataToFile(const QString &filePath); // Restaurado
+    bool saveFileAs();                            // Restaurado
     bool saveCurrentFile();
     bool maybeSave();
     
@@ -88,9 +101,10 @@ private:
     void pushUndoState();
     void updateUndoRedoActions();
     
-    // --- FUNCIONES DE TABLA ---
+    // --- TABLE HELPERS ---
     bool saveTableFile(const QString &filePath);
     bool loadTableFile(const QString &filePath);
+    void insertSeries(const QList<QString> &series); // Restaurado
     
     // Recent Files Helpers
     void createRecentFileActions();
