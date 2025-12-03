@@ -14,6 +14,8 @@
 class HexEditorArea;
 class QTableWidget;
 class QDockWidget;
+class FindReplaceDialog; 
+class QRadioButton; 
 
 namespace Ui {
 class hexandtabler;
@@ -26,6 +28,9 @@ class hexandtabler : public QMainWindow
 public:
     explicit hexandtabler(QWidget *parent = nullptr);
     ~hexandtabler();
+    
+    // Public function required for find/replace
+    QByteArray convertSearchString(const QString &input, int type) const; 
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -33,7 +38,7 @@ protected:
 private slots:
     void on_actionOpen_triggered();
     void on_actionSave_triggered();
-    void on_actionSaveAs_triggered(); // Restaurado
+    void on_actionSaveAs_triggered(); 
     void on_actionExit_triggered();
     void on_actionAbout_triggered();
     
@@ -47,53 +52,65 @@ private slots:
     
     void on_actionGoTo_triggered(); 
     
+    // --- FIND/REPLACE SLOTS ---
+    void on_actionFind_triggered();
+    void on_actionReplace_triggered();
+    
     // --- TABLE SLOTS ---
     void on_actionToggleTable_triggered(); 
     void on_actionLoadTable_triggered();
     void on_actionSaveTable_triggered();
-    void on_actionSaveTableAs_triggered(); // Restaurado
-
-    // --- SERIES INSERTION SLOTS ---
-    void on_actionInsertLatinUpper_triggered(); // Restaurado
-    void on_actionInsertLatinLower_triggered(); // Restaurado
-    void on_actionInsertHiragana_triggered(); // Restaurado
-    void on_actionInsertKatakana_triggered(); // Restaurado
-
+    void on_actionSaveTableAs_triggered();
+    
+    void on_actionInsertLatinUpper_triggered();
+    void on_actionInsertLatinLower_triggered();
+    void on_actionInsertHiragana_triggered();
+    void on_actionInsertKatakana_triggered();
+    void on_actionInsertCyrillic_triggered();
+    
+    // --- EVENT HANDLERS ---
     void handleDataEdited();
     void handleTableItemChanged(QTableWidgetItem *item);
+    
+    // Recent Files Slots
     void openRecentFile();
-
+    
 private:
     Ui::hexandtabler *ui;
     HexEditorArea *m_hexEditorArea = nullptr;
     QTableWidget *m_conversionTable = nullptr;
     QDockWidget *m_tableDock = nullptr;
-
+    FindReplaceDialog *m_findReplaceDialog = nullptr; 
+    
     QByteArray m_fileData;
     QString m_currentFilePath;
-    QString m_currentTablePath; // Restaurado
+    QString m_currentTablePath; 
     bool m_isModified = false;
     
     // Undo/Redo
     QList<QByteArray> m_undoStack;
     QList<QByteArray> m_redoStack;
-    QAction *undoAct = nullptr;
-    QAction *redoAct = nullptr;
 
     // Table Mapping
     QString m_charMap[256]; 
 
+    // Find/Replace Logic
+    void findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards);
+    void replaceOne();
+    void replaceAll(const QByteArray &needle, const QByteArray &replacement);
+    
     // Recent Files
     enum { MaxRecentFiles = 5 };
     QAction *recentFileActions[MaxRecentFiles];
 
 
     void setupConversionTable();
-    void createMenus(); 
     
     void loadFile(const QString &filePath);
-    bool saveDataToFile(const QString &filePath); // Restaurado
-    bool saveFileAs();                            // Restaurado
+    // Declaración agregada
+    void setCurrentFile(const QString &filePath); 
+    bool saveDataToFile(const QString &filePath); 
+    bool saveFileAs();                            
     bool saveCurrentFile();
     bool maybeSave();
     
@@ -102,9 +119,9 @@ private:
     void updateUndoRedoActions();
     
     // --- TABLE HELPERS ---
-    bool saveTableFile(const QString &filePath);
+    bool saveTableFile(const QString &filePath); 
     bool loadTableFile(const QString &filePath);
-    void insertSeries(const QList<QString> &series); // Restaurado
+    void insertSeries(const QList<QString> &series); 
     
     // Recent Files Helpers
     void createRecentFileActions();

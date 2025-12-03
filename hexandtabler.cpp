@@ -27,6 +27,16 @@
 #include <QInputDialog> 
 #include <QTextStream> 
 #include <QModelIndexList> 
+#include <QFormLayout> 
+#include <QLabel> 
+#include <QLineEdit> 
+#include <QPushButton> 
+#include <QHBoxLayout> 
+#include <QVBoxLayout> 
+#include <QCheckBox> 
+#include <QRadioButton> 
+#include <QDialog> 
+#include <QDir> 
 
 // Custom widget include
 #include "hexeditorarea.h" 
@@ -38,182 +48,307 @@ const int MAX_UNDO_STATES = 50;
 
 
 // --------------------------------------------------------------------------------
-// --- Helper Functions (Zoom, About, and Menu Connections) ---
+// --- AUXILIARY CLASS: FindReplaceDialog ---
 // --------------------------------------------------------------------------------
 
-void hexandtabler::createMenus() {
-    // About, Open, Save, and Exit actions are connected automatically.
+class FindReplaceDialog : public QDialog
+{
+    Q_OBJECT
+
+public:
+    enum SearchType {
+        HexSearch,
+        CharSearch
+    };
+
+    FindReplaceDialog(QWidget *parent = nullptr);
     
-    // Zoom actions connection
-    if (ui->actionZoomIn) {
-        ui->actionZoomIn->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Plus)); 
-        connect(ui->actionZoomIn, &QAction::triggered, this, &hexandtabler::on_actionZoomIn_triggered);
-    }
-    if (ui->actionZoomOut) {
-        connect(ui->actionZoomOut, &QAction::triggered, this, &hexandtabler::on_actionZoomOut_triggered);
-    }
-    // Go To action connection
-    if (ui->actionGoTo) {
-        connect(ui->actionGoTo, &QAction::triggered, this, &hexandtabler::on_actionGoTo_triggered);
-    }
+    QString findText() const { return findLineEdit->text(); }
+    QString replaceText() const { return replaceLineEdit->text(); }
+    bool isCaseSensitive() const { return caseSensitiveCheckBox->isChecked(); }
+    bool isWrapped() const { return wrapCheckBox->isChecked(); } 
+    bool isReplaceMode() const { return replaceLineEdit->isVisible(); }
     
-    // File actions connection (RESTAURADO)
-    if (ui->actionSaveAs) { 
-        connect(ui->actionSaveAs, &QAction::triggered, this, &hexandtabler::on_actionSaveAs_triggered);
-    }
+    SearchType searchType() const { 
+        return hexRadioButton->isChecked() ? HexSearch : CharSearch; 
+    } 
     
-    // Table actions connection (RESTAURADO)
-    if (ui->actionToggleTable) { 
-        connect(ui->actionToggleTable, &QAction::triggered, this, &hexandtabler::on_actionToggleTable_triggered);
-    }
-    if (ui->actionLoadTable) { 
-        connect(ui->actionLoadTable, &QAction::triggered, this, &hexandtabler::on_actionLoadTable_triggered);
-    }
-    if (ui->actionSaveTable) { 
-        connect(ui->actionSaveTable, &QAction::triggered, this, &hexandtabler::on_actionSaveTable_triggered);
-    }
-    if (ui->actionSaveTableAs) { 
-        connect(ui->actionSaveTableAs, &QAction::triggered, this, &hexandtabler::on_actionSaveTableAs_triggered);
+    void setFindMode() { 
+        setWindowTitle(tr("Find")); 
+        replaceLabel->hide(); 
+        replaceLineEdit->hide(); 
+        replaceButton->hide(); 
+        replaceAllButton->hide();
     }
     
-    // New Insert Series connections (RESTAURADO)
-    if (ui->actionInsertLatinUpper) {
-        connect(ui->actionInsertLatinUpper, &QAction::triggered, this, &hexandtabler::on_actionInsertLatinUpper_triggered);
+    void setReplaceMode() { 
+        setWindowTitle(tr("Find and Replace"));
+        replaceLabel->show(); 
+        replaceLineEdit->show(); 
+        replaceButton->show(); 
+        replaceAllButton->show();
     }
-    if (ui->actionInsertLatinLower) {
-        connect(ui->actionInsertLatinLower, &QAction::triggered, this, &hexandtabler::on_actionInsertLatinLower_triggered);
-    }
-    if (ui->actionInsertHiragana) {
-        connect(ui->actionInsertHiragana, &QAction::triggered, this, &hexandtabler::on_actionInsertHiragana_triggered);
-    }
-    if (ui->actionInsertKatakana) {
-        connect(ui->actionInsertKatakana, &QAction::triggered, this, &hexandtabler::on_actionInsertKatakana_triggered);
-    }
+
+signals:
+    void findNextClicked(bool backwards);
+    void replaceClicked();
+    void replaceAllClicked();
+    
+private slots:
+    void onFindNext();
+    
+private:
+    QLineEdit *findLineEdit;
+    QLineEdit *replaceLineEdit;
+    QCheckBox *caseSensitiveCheckBox;
+    QCheckBox *wrapCheckBox;
+    QCheckBox *backwardsCheckBox;
+    
+    QRadioButton *hexRadioButton; 
+    QRadioButton *charRadioButton; 
+    
+    QLabel *replaceLabel;
+    QPushButton *findNextButton;
+    QPushButton *replaceButton;
+    QPushButton *replaceAllButton;
+};
+
+FindReplaceDialog::FindReplaceDialog(QWidget *parent)
+    : QDialog(parent)
+{
+    // --- 1. Form Layout (Find/Replace Inputs) ---
+    findLineEdit = new QLineEdit;
+    replaceLineEdit = new QLineEdit;
+    
+    QLabel *findLabel = new QLabel(tr("&Find:"));
+    findLabel->setBuddy(findLineEdit);
+    replaceLabel = new QLabel(tr("&Replace:"));
+    replaceLabel->setBuddy(replaceLineEdit);
+
+    QFormLayout *formLayout = new QFormLayout; 
+    formLayout->addRow(findLabel, findLineEdit);
+    formLayout->addRow(replaceLabel, replaceLineEdit);
+
+    // --- 2. Search Type Selection ---
+    hexRadioButton = new QRadioButton(tr("Hexadecimal (FF 1A)"));
+    charRadioButton = new QRadioButton(tr("Character (Table)"));
+    hexRadioButton->setChecked(true); 
+
+    QHBoxLayout *typeLayout = new QHBoxLayout;
+    typeLayout->addWidget(new QLabel(tr("Search Type:")));
+    typeLayout->addWidget(hexRadioButton);
+    typeLayout->addWidget(charRadioButton);
+
+    // --- 3. Checkboxes (Options) ---
+    caseSensitiveCheckBox = new QCheckBox(tr("Case sensitive"));
+    wrapCheckBox = new QCheckBox(tr("Wrap around"));
+    backwardsCheckBox = new QCheckBox(tr("Search backwards"));
+    
+    QVBoxLayout *optionsLayout = new QVBoxLayout;
+    optionsLayout->addWidget(caseSensitiveCheckBox);
+    optionsLayout->addWidget(wrapCheckBox);
+    optionsLayout->addWidget(backwardsCheckBox);
+    
+    // --- 4. Buttons (Actions) ---
+    findNextButton = new QPushButton(tr("Find Next"));
+    findNextButton->setDefault(true);
+    replaceButton = new QPushButton(tr("Replace"));
+    replaceAllButton = new QPushButton(tr("Replace All"));
+    QPushButton *closeButton = new QPushButton(tr("Close"));
+
+    QHBoxLayout *buttonLayout = new QHBoxLayout;
+    buttonLayout->addWidget(findNextButton);
+    buttonLayout->addWidget(replaceButton);
+    buttonLayout->addWidget(replaceAllButton);
+    buttonLayout->addWidget(closeButton);
+    
+    // --- 5. Main Layout ---
+    QVBoxLayout *mainLayout = new QVBoxLayout;
+    mainLayout->addLayout(formLayout);
+    mainLayout->addLayout(typeLayout); 
+    mainLayout->addLayout(optionsLayout);
+    mainLayout->addLayout(buttonLayout);
+    setLayout(mainLayout);
+    
+    // --- 6. Connections ---
+    connect(findNextButton, &QPushButton::clicked, this, &FindReplaceDialog::onFindNext);
+    connect(replaceButton, &QPushButton::clicked, this, &FindReplaceDialog::replaceClicked);
+    connect(replaceAllButton, &QPushButton::clicked, this, &FindReplaceDialog::replaceAllClicked);
+    connect(closeButton, &QPushButton::clicked, this, &FindReplaceDialog::close);
+    
+    connect(findLineEdit, &QLineEdit::textEdited, [=](){
+        backwardsCheckBox->setChecked(false);
+    });
+    
+    // Initial state
+    setFindMode();
+    setFixedSize(sizeHint());
 }
 
-
-void hexandtabler::on_actionAbout_triggered() {
-    // Mantiene la última modificación: Título solo "hexandtabler" y contenido solo "Author: **FEES**"
-    QMessageBox::about(this, applicationName,
-        tr("Author: **FEES**")
-    );
+void FindReplaceDialog::onFindNext() {
+    emit findNextClicked(backwardsCheckBox->isChecked());
 }
 
-void hexandtabler::on_actionZoomIn_triggered() {
-    if (!m_hexEditorArea) return; 
+// --------------------------------------------------------------------------------
+// --- CONVERSION HELPER FUNCTION ---
+// --------------------------------------------------------------------------------
 
-    QFont currentFont = m_hexEditorArea->font();
-    currentFont.setPointSize(currentFont.pointSize() + 1);
-    m_hexEditorArea->setFont(currentFont);
-    
-    m_hexEditorArea->updateViewMetrics(); 
-}
-
-void hexandtabler::on_actionZoomOut_triggered() {
-    if (!m_hexEditorArea) return; 
-    
-    QFont currentFont = m_hexEditorArea->font();
-    int newSize = currentFont.pointSize() - 1;
-    if (newSize >= 6) { 
-        currentFont.setPointSize(newSize);
-        m_hexEditorArea->setFont(currentFont);
+QByteArray hexandtabler::convertSearchString(const QString &input, int type) const {
+    if (type == 0) { // HexSearch
+        QString hexInput = input;
+        hexInput.remove(' '); 
         
-        m_hexEditorArea->updateViewMetrics(); 
+        if (hexInput.length() % 2 != 0) {
+            return QByteArray();
+        }
+        return QByteArray::fromHex(hexInput.toUtf8());
+    } 
+    
+    if (type == 1) { // CharSearch
+        QByteArray result;
+        QString searchString = input;
+        
+        for (const QChar &ch : searchString) {
+            bool found = false;
+            for (int byteValue = 0; byteValue < 256; ++byteValue) {
+                if (!m_charMap[byteValue].isEmpty() && m_charMap[byteValue].at(0) == ch) { 
+                    result.append((char)byteValue);
+                    found = true;
+                    break; 
+                }
+            }
+            if (!found) {
+                return QByteArray(); 
+            }
+        }
+        return result;
     }
+    
+    return QByteArray();
 }
 
-
 // --------------------------------------------------------------------------------
-// --- START OF CLASS IMPLEMENTATIONS ---
+// --- MAIN WINDOW: hexandtabler (CONSTRUCTOR CORREGIDO) ---
 // --------------------------------------------------------------------------------
-
 
 hexandtabler::hexandtabler(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::hexandtabler)
 {
+    // 1. Setup UI 
     ui->setupUi(this);
     
-    // Central editing area configuration
-    m_hexEditorArea = new HexEditorArea(this);
-    setCentralWidget(m_hexEditorArea);
-
-    // Table widget configuration (Dock Widget)
-    m_conversionTable = new QTableWidget(this); 
-    setupConversionTable(); 
+    // 2. Setup Conversion Table (DockWidget y QTableWidget)
+    m_conversionTable = new QTableWidget(this);
+    m_tableDock = new QDockWidget(tr("Conversion Table"), this);
     
-    m_tableDock = new QDockWidget(tr("Conversion Table (.TBL)"), this); 
-    // Remove title bar buttons (close/float)
-    m_tableDock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+    // >> ELIMINAR BOTONES DE CERRAR Y FLOTAR
+    m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); // Mantiene el movimiento, elimina Close y Float
+    
     m_tableDock->setWidget(m_conversionTable);
     addDockWidget(Qt::RightDockWidgetArea, m_tableDock);
-
-    setWindowTitle(applicationName); 
-    m_fileData.clear(); 
-    m_currentTablePath.clear(); // Initialize new member
+    setupConversionTable();
     
-    // --- Undo/Redo and Edit Menu Configuration ---
-    undoAct = ui->actionUndo; 
-    redoAct = ui->actionRedo;
-    
-    if (undoAct) {
-        connect(undoAct, &QAction::triggered, this, &hexandtabler::on_actionUndo_triggered);
-    } 
-    if (redoAct) {
-        // Fix: Ensure the Redo action does not have a bold font style (user request fix)
-        QFont normalFont = redoAct->font();
-        normalFont.setWeight(QFont::Normal);
-        redoAct->setFont(normalFont);
+    // 3. Reemplazar el Editor (QTextEdit) por el Custom Widget (HexEditorArea)
+    if (ui->hexEdit) {
+        QWidget *placeholder = ui->hexEdit;
+        QVBoxLayout *layout = qobject_cast<QVBoxLayout*>(placeholder->parentWidget()->layout());
         
-        connect(redoAct, &QAction::triggered, this, &hexandtabler::on_actionRedo_triggered);
-    } 
+        if (layout) {
+            m_hexEditorArea = new HexEditorArea(this);
+            m_hexEditorArea->setHexData(m_fileData);
+            
+            int index = layout->indexOf(placeholder);
+            if (index != -1) {
+                layout->insertWidget(index, m_hexEditorArea);
+            } else {
+                layout->addWidget(m_hexEditorArea);
+            }
+            
+            delete placeholder;
+            ui->hexEdit = nullptr; 
+        } else {
+            m_hexEditorArea = nullptr; 
+        }
+    } else {
+        m_hexEditorArea = nullptr;
+    }
     
-    // Connect the slot for table item changes
-    connect(m_conversionTable, &QTableWidget::itemChanged, this, &hexandtabler::handleTableItemChanged);
+    // 4. Inicializar Find/Replace Dialog
+    m_findReplaceDialog = new FindReplaceDialog(this); 
     
-    // Pass the initial map to the hex editor area
+    // 5. Conexiones y Estado Inicial
+
     if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap); 
+         connect(m_hexEditorArea, &HexEditorArea::dataChanged, this, &hexandtabler::handleDataEdited);
+    }
+    
+    if (m_conversionTable) {
+        connect(m_conversionTable, &QTableWidget::itemChanged, this, &hexandtabler::handleTableItemChanged);
     }
 
-    // --- Recent Files Setup ---
-    createRecentFileActions();
-    loadRecentFiles();
-    updateRecentFileActions();
+    if (m_findReplaceDialog) {
+        connect(m_findReplaceDialog, &FindReplaceDialog::findNextClicked, this, [this](bool backwards) {
+            QByteArray needle = this->convertSearchString(m_findReplaceDialog->findText(), m_findReplaceDialog->searchType());
+            if (needle.isEmpty()) {
+                QMessageBox::warning(m_findReplaceDialog, tr("Input Error"), tr("Invalid search pattern or character not found in map."));
+                return;
+            }
+            this->findNext(needle, m_findReplaceDialog->isCaseSensitive(), m_findReplaceDialog->isWrapped(), backwards);
+        });
 
-    // Action Connections
-    connect(ui->actionDarkMode, &QAction::toggled, this, &hexandtabler::on_actionDarkMode_triggered); 
+        connect(m_findReplaceDialog, &FindReplaceDialog::replaceAllClicked, this, [this]() {
+            QByteArray needle = this->convertSearchString(m_findReplaceDialog->findText(), m_findReplaceDialog->searchType());
+            QByteArray replacement = this->convertSearchString(m_findReplaceDialog->replaceText(), m_findReplaceDialog->searchType());
+            if (needle.isEmpty()) {
+                QMessageBox::warning(m_findReplaceDialog, tr("Input Error"), tr("Invalid search pattern."));
+                return;
+            }
+            this->replaceAll(needle, replacement);
+        });
+        
+        connect(m_findReplaceDialog, &FindReplaceDialog::replaceClicked, this, &hexandtabler::replaceOne); 
+    }
 
-    // Options Connections (Table)
+    on_actionDarkMode_triggered(ui->actionDarkMode->isChecked());
+    
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap); 
+    } 
+    
     connect(ui->actionToggleTable, &QAction::toggled, m_tableDock, &QDockWidget::setVisible);
     connect(m_tableDock, &QDockWidget::visibilityChanged, ui->actionToggleTable, &QAction::setChecked);
     
-    // Main connection of the editing engine with the main window
-    connect(m_hexEditorArea, &HexEditorArea::dataChanged, this, &hexandtabler::handleDataEdited); 
-    
+    createRecentFileActions();
+    loadRecentFiles();
+    // createMenus(); // Ya no es necesario si los menus se configuran en el .ui
     updateUndoRedoActions();
-    ui->actionSave->setEnabled(false); 
-
-    // Menu and sub-action configuration (Zoom and About, Go To, Table)
-    createMenus(); 
     
-    // Load saved state
-    QSettings settings(organizationName, applicationName);
-    restoreGeometry(settings.value("geometry").toByteArray());
-    restoreState(settings.value("windowState").toByteArray());
+    setWindowTitle(QString("%1 - %2").arg(applicationName).arg(tr("No File")));
+    setWindowIcon(QApplication::style()->standardIcon(QStyle::SP_DriveCDIcon));
 }
 
-hexandtabler::~hexandtabler() {
+hexandtabler::~hexandtabler()
+{
     delete ui;
 }
 
+void hexandtabler::closeEvent(QCloseEvent *event)
+{
+    if (maybeSave()) {
+        event->accept();
+    } else {
+        event->ignore();
+    }
+}
+
 // --------------------------------------------------------------------------------
-// --- FILE SLOTS AND HELPERS ---
+// --- FILE AND SAVE OPERATIONS ---
 // --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionOpen_triggered() {
     if (!maybeSave()) return; 
-
+    
     QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), "", tr("All Files (*.*)"));
     if (!filePath.isEmpty()) {
         loadFile(filePath);
@@ -222,32 +357,24 @@ void hexandtabler::on_actionOpen_triggered() {
 
 void hexandtabler::on_actionSave_triggered() {
     if (m_currentFilePath.isEmpty()) {
-        on_actionSaveAs_triggered(); // If no path, trigger Save As...
+        on_actionSaveAs_triggered(); 
         return;
     }
     saveCurrentFile();
 }
 
-// DEFINICIÓN RESTAURADA
 void hexandtabler::on_actionSaveAs_triggered() {
     saveFileAs();
 }
 
-// DEFINICIÓN RESTAURADA
 bool hexandtabler::saveFileAs() {
-    // Show a file dialog to choose a path
-    QString fileName = QFileDialog::getSaveFileName(this, 
-                                                    tr("Save File As"), 
-                                                    m_currentFilePath.isEmpty() ? QDir::homePath() : QFileInfo(m_currentFilePath).absoluteDir().path(), 
-                                                    tr("All Files (*.*)"));
-    
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save File As"), m_currentFilePath.isEmpty() ? QDir::homePath() : QFileInfo(m_currentFilePath).absoluteDir().path(), tr("All Files (*.*)"));
     if (fileName.isEmpty()) {
-        return false; // User cancelled the dialog
+        return false;
     }
-    
-    // Attempt to save the data to the chosen file
+
     if (saveDataToFile(fileName)) {
-        m_currentFilePath = fileName; // Update the current file path
+        m_currentFilePath = fileName;
         setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(m_currentFilePath).fileName()));
         prependToRecentFiles(m_currentFilePath);
         return true;
@@ -255,541 +382,668 @@ bool hexandtabler::saveFileAs() {
     return false;
 }
 
-// DEFINICIÓN RESTAURADA
+bool hexandtabler::saveCurrentFile() {
+    if (m_currentFilePath.isEmpty()) {
+        return saveFileAs();
+    }
+    
+    if (saveDataToFile(m_currentFilePath)) {
+        setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(m_currentFilePath).fileName()));
+        return true;
+    }
+    return false;
+}
+
 bool hexandtabler::saveDataToFile(const QString &filePath) {
+    if (m_hexEditorArea) {
+        m_fileData = m_hexEditorArea->hexData();
+    } else {
+        QMessageBox::critical(this, tr("Error"), tr("Editor area is not initialized. Cannot save data."));
+        return false;
+    }
+
     QFile file(filePath);
     if (!file.open(QIODevice::WriteOnly)) {
-        QMessageBox::warning(this, tr("hexandtabler"),
-                             tr("Cannot write file %1:\n%2.")
-                             .arg(QDir::toNativeSeparators(filePath), file.errorString()));
+        QMessageBox::critical(this, tr("Error"), tr("Could not write file %1:\n%2.").arg(filePath).arg(file.errorString()));
         return false;
     }
 
-    refreshModelFromArea(); // Ensure m_fileData is up to date
+    if (file.write(m_fileData) == -1) {
+        QMessageBox::critical(this, tr("Error"), tr("Could not write all data to file %1:\n%2.").arg(filePath).arg(file.errorString()));
+        file.close();
+        return false;
+    }
 
-    qint64 bytesWritten = file.write(m_fileData);
+    file.close();
+    m_isModified = false;
+    updateUndoRedoActions();
+    return true;
+}
+
+void hexandtabler::loadFile(const QString &filePath) {
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        QMessageBox::critical(this, tr("Error"), tr("Could not read file %1:\n%2.").arg(filePath).arg(file.errorString()));
+        return;
+    }
+
+    m_fileData = file.readAll();
     file.close();
 
-    if (bytesWritten != m_fileData.size()) {
-        QMessageBox::warning(this, tr("hexandtabler"),
-                             tr("Error saving data to file: bytes written mismatch."));
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setHexData(m_fileData);
+        m_hexEditorArea->goToOffset(0); 
+    }
+    
+    m_currentFilePath = filePath;
+    m_isModified = false;
+    m_undoStack.clear();
+    m_redoStack.clear();
+    pushUndoState();
+    updateUndoRedoActions();
+    
+    setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(filePath).fileName()));
+    prependToRecentFiles(filePath);
+}
+
+bool hexandtabler::maybeSave()
+{
+    if (!m_isModified)
+        return true;
+
+    const QMessageBox::StandardButton ret
+        = QMessageBox::warning(this, applicationName,
+                             tr("The document has been modified.\n"
+                                "Do you want to save your changes?"),
+                             QMessageBox::Save | QMessageBox::Discard
+                             | QMessageBox::Cancel);
+    switch (ret) {
+    case QMessageBox::Save:
+        return saveCurrentFile();
+    case QMessageBox::Discard:
+        return true;
+    case QMessageBox::Cancel:
+    default:
         return false;
     }
-
-    m_isModified = false;
-    ui->actionSave->setEnabled(false);
-    return true;
 }
 
 void hexandtabler::on_actionExit_triggered() {
     close();
 }
 
-void hexandtabler::openRecentFile() {
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (action && maybeSave()) {
-        loadFile(action->data().toString());
-    }
+void hexandtabler::on_actionAbout_triggered() {
+    QMessageBox::about(this, tr("About ") + applicationName,
+                       tr("<h2>") + applicationName + tr(" 1.0</h2>"
+                          "<p>A simple Hex Editor and Table Conversion Utility.</p>"
+                          "<p>Developed by [FEES] for testing purposes.</p>"));
 }
-
-// --------------------------------------------------------------------------------
-// --- OPTIONS AND EDIT SLOTS ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
+    QPalette p = QApplication::palette();
     if (checked) {
-        QPalette darkPalette;
-        darkPalette.setColor(QPalette::Window, QColor(53, 53, 53));
-        darkPalette.setColor(QPalette::WindowText, Qt::white);
-        darkPalette.setColor(QPalette::Base, QColor(25, 25, 25)); 
-        darkPalette.setColor(QPalette::AlternateBase, QColor(66, 66, 66)); 
-        darkPalette.setColor(QPalette::ToolTipBase, Qt::white);
-        darkPalette.setColor(QPalette::ToolTipText, Qt::white);
-        darkPalette.setColor(QPalette::Text, Qt::white); 
-        darkPalette.setColor(QPalette::Button, QColor(53, 53, 53));
-        darkPalette.setColor(QPalette::ButtonText, Qt::white);
-        darkPalette.setColor(QPalette::BrightText, Qt::red);
-        darkPalette.setColor(QPalette::Link, QColor(42, 130, 218));
-        darkPalette.setColor(QPalette::Highlight, QColor(42, 130, 218));
-        darkPalette.setColor(QPalette::HighlightedText, Qt::black);
-
-        qApp->setPalette(darkPalette);
+        p.setColor(QPalette::Window, QColor(53, 53, 53));
+        p.setColor(QPalette::WindowText, Qt::white);
+        p.setColor(QPalette::Base, QColor(25, 25, 25));
+        p.setColor(QPalette::AlternateBase, QColor(53, 53, 53));
+        p.setColor(QPalette::ToolTipBase, Qt::white);
+        p.setColor(QPalette::ToolTipText, Qt::white);
+        p.setColor(QPalette::Text, Qt::white);
+        p.setColor(QPalette::Button, QColor(53, 53, 53));
+        p.setColor(QPalette::ButtonText, Qt::white);
+        p.setColor(QPalette::BrightText, Qt::red);
+        p.setColor(QPalette::Link, QColor(42, 130, 218));
+        p.setColor(QPalette::Highlight, QColor(42, 130, 218));
+        p.setColor(QPalette::HighlightedText, Qt::black);
     } else {
-        qApp->setPalette(QApplication::style()->standardPalette());
+        p = QApplication::style()->standardPalette();
     }
-    // Force the hex editor to update to use the new palette colors
-    if (m_hexEditorArea) {
-        m_hexEditorArea->viewport()->update();
-    }
+    QApplication::setPalette(p);
+    
+    QSettings settings(organizationName, applicationName);
+    settings.setValue("darkMode", checked);
 }
 
-void hexandtabler::on_actionToggleTable_triggered() {
-    // Toggles the visibility of the dock widget
-    if (m_tableDock) {
-        m_tableDock->setVisible(!m_tableDock->isVisible());
-    }
+void hexandtabler::on_actionZoomIn_triggered() {
+    if (m_hexEditorArea) m_hexEditorArea->setFont(QFont(m_hexEditorArea->font().family(), m_hexEditorArea->font().pointSize() + 1));
 }
 
-void hexandtabler::on_actionUndo_triggered() {
-    if (m_undoStack.isEmpty()) return;
-
-    m_redoStack.append(m_fileData); 
-    m_fileData = m_undoStack.takeLast(); 
-    
-    m_hexEditorArea->setHexData(m_fileData);
-    m_hexEditorArea->updateViewMetrics();
-    
-    updateUndoRedoActions();
-    m_isModified = true;
-    ui->actionSave->setEnabled(true);
-}
-
-void hexandtabler::on_actionRedo_triggered() {
-    if (m_redoStack.isEmpty()) return;
-
-    m_undoStack.append(m_fileData);
-    m_fileData = m_redoStack.takeLast();
-
-    m_hexEditorArea->setHexData(m_fileData);
-    m_hexEditorArea->updateViewMetrics();
-    
-    updateUndoRedoActions();
-    m_isModified = true;
-    ui->actionSave->setEnabled(true);
+void hexandtabler::on_actionZoomOut_triggered() {
+    if (m_hexEditorArea) m_hexEditorArea->setFont(QFont(m_hexEditorArea->font().family(), std::max(8, m_hexEditorArea->font().pointSize() - 1)));
 }
 
 void hexandtabler::on_actionGoTo_triggered() {
+    if (!m_hexEditorArea) return;
+
     bool ok;
-    // Request the hex address to jump to. QInputDialog::getText is modal and closes itself.
-    QString hexOffsetStr = QInputDialog::getText(this, tr("Go to Offset"),
-                                                tr("Enter hexadecimal offset (e.g., 1A0):"), QLineEdit::Normal,
-                                                "", &ok);
-    
-    if (ok && !hexOffsetStr.isEmpty()) {
-        bool conversionOk;
-        // Convert the string to a long long integer (base 16)
-        quint64 offset = hexOffsetStr.toULongLong(&conversionOk, 16);
+    QString text = QInputDialog::getText(this, tr("Go To Offset"),
+                                         tr("Enter offset in hexadecimal:"), QLineEdit::Normal,
+                                         QString(), &ok);
+    if (ok && !text.isEmpty()) {
+        bool hexOk;
+        quint64 offset = text.toULongLong(&hexOk, 16);
         
-        if (conversionOk && m_hexEditorArea) {
+        if (hexOk) {
             m_hexEditorArea->goToOffset(offset);
         } else {
-            QMessageBox::warning(this, tr("Invalid Input"), tr("Invalid hexadecimal offset entered."));
+            QMessageBox::warning(this, tr("Invalid Input"), tr("The input is not a valid hexadecimal number."));
         }
-    }
-}
-
-
-void hexandtabler::handleDataEdited() {
-    pushUndoState(); 
-    m_isModified = true;
-    ui->actionSave->setEnabled(true);
-}
-
-// Slot to handle table changes and update the character map
-void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
-    // We are only interested in changes in the second column (index 1)
-    if (item->column() != 1) {
-        return; 
-    }
-    
-    int byteValue = item->row();
-    QString newChar = item->text();
-    
-    // The map only supports single characters for display
-    QString displayChar = newChar.left(1); 
-
-    // Update the map storage
-    m_charMap[byteValue] = displayChar;
-    
-    // Ensure the table item itself only shows one character
-    if (newChar != displayChar) {
-        // Block signals to prevent recursive calls
-        QSignalBlocker blocker(m_conversionTable);
-        item->setText(displayChar);
-    }
-    
-    // Notify the hex editor to redraw with the new map
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
     }
 }
 
 // --------------------------------------------------------------------------------
-// --- TABLE SLOTS AND HELPERS (.TBL) ---
+// --- UNDO/REDO LOGIC ---
 // --------------------------------------------------------------------------------
-
-void hexandtabler::on_actionSaveTable_triggered() {
-    // If a path is already saved, use it. Otherwise, trigger Save As...
-    if (m_currentTablePath.isEmpty()) {
-        on_actionSaveTableAs_triggered();
-        return;
-    }
-    saveTableFile(m_currentTablePath);
-}
-
-// DEFINICIÓN RESTAURADA
-void hexandtabler::on_actionSaveTableAs_triggered() {
-    // The filter defaults to *.tbl and is the first option
-    QString fileName = QFileDialog::getSaveFileName(this, 
-                                                    tr("Save Conversion Table As"), 
-                                                    QDir::homePath(), 
-                                                    tr("Conversion Table Files (*.tbl);;All Files (*)"));
-    
-    if (fileName.isEmpty()) {
-        return; // User cancelled
-    }
-    
-    // Ensure the file has the correct extension if the user didn't specify a filter
-    if (!fileName.toLower().endsWith(".tbl")) {
-        fileName += ".tbl";
-    }
-    
-    if (saveTableFile(fileName)) {
-        m_currentTablePath = fileName; // Update the current table path
-    }
-}
-
-void hexandtabler::on_actionLoadTable_triggered() {
-    QString filePath = QFileDialog::getOpenFileName(this, tr("Load Conversion Table"), "", tr("Table Files (*.tbl);;All Files (*.*)"));
-    if (!filePath.isEmpty()) {
-        if (loadTableFile(filePath)) {
-            m_currentTablePath = filePath; // Update the current table path on successful load
-        }
-    }
-}
-
-bool hexandtabler::saveTableFile(const QString &filePath) {
-    QFile file(filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, tr("Save Error"), tr("Cannot open file for writing: ") + file.errorString());
-        return false;
-    }
-    
-    QTextStream out(&file);
-
-    // Save map content: XX=C format (256 entries)
-    for (int i = 0; i < 256; ++i) {
-        // Hex byte (00 to FF)
-        QString hexByte = QString("%1").arg(i, 2, 16, QChar('0')).toUpper(); 
-        
-        // Character (use the stored one, default is '.')
-        QString charValue = m_charMap[i].isEmpty() ? "." : m_charMap[i];
-
-        // Write: 00=. or 41=A
-        out << hexByte << "=" << charValue << "\n";
-    }
-
-    file.close();
-    QMessageBox::information(this, tr("Success"), tr("Conversion table saved successfully."));
-    return true;
-}
-
-bool hexandtabler::loadTableFile(const QString &filePath) {
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::critical(this, tr("Load Error"), tr("Cannot open file for reading: ") + file.errorString());
-        return false;
-    }
-
-    QTextStream in(&file);
-    QString newMap[256];
-    
-    // 1. Initialize newMap with DEFAULTS (printable ASCII or dot)
-    for (int i = 0; i < 256; ++i) {
-        char c = (char)i;
-        bool isSafePrint = (i >= 0x20 && i <= 0x7E);
-        newMap[i] = isSafePrint ? QString(c) : QString(".");
-    }
-    
-    // Parse the file line by line, overwriting defaults in newMap
-    while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith('#')) continue; 
-
-        int equalsIndex = line.indexOf('=');
-        if (equalsIndex > 0) {
-            QString hexStr = line.left(equalsIndex).trimmed();
-            QString charStr = line.mid(equalsIndex + 1).trimmed();
-            
-            bool ok;
-            int byteValue = hexStr.toInt(&ok, 16); 
-
-            if (ok && byteValue >= 0 && byteValue <= 255) {
-                // We only care about the first character of the string
-                QString displayChar = charStr.left(1);
-                if (displayChar.isEmpty()) displayChar = "."; 
-                
-                newMap[byteValue] = displayChar;
-            }
-        }
-    }
-    
-    file.close();
-
-    // Apply the new map (defaults + file content) to the internal storage and the table widget
-    bool mapChanged = false;
-    for (int i = 0; i < 256; ++i) {
-        if (m_charMap[i] != newMap[i]) {
-            m_charMap[i] = newMap[i];
-            mapChanged = true;
-
-            // Update the QTableWidget
-            if (m_conversionTable && m_conversionTable->item(i, 1)) {
-                QSignalBlocker blocker(m_conversionTable);
-                m_conversionTable->item(i, 1)->setText(m_charMap[i]);
-            }
-        }
-    }
-    
-    if (!mapChanged) { 
-        QMessageBox::information(this, tr("Load Warning"), tr("The loaded table is identical to the current one. No changes applied."));
-        return true; 
-    }
-
-    // Notify the hex editor to redraw with the new map
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
-    }
-
-    QMessageBox::information(this, tr("Success"), tr("Conversion table loaded successfully and overwritten the current map."));
-    return true;
-}
-
-// --- SERIES INSERTION IMPLEMENTATION (RESTAURADO) ---
-
-void hexandtabler::insertSeries(const QList<QString> &series) {
-    if (!m_conversionTable || series.isEmpty()) return;
-
-    // Get the starting row (top-left selected cell's row, or 0 if nothing selected)
-    QModelIndexList selectedIndexes = m_conversionTable->selectionModel()->selectedIndexes();
-    int startRow = 0;
-    if (!selectedIndexes.isEmpty()) {
-        // Find the index with the smallest row number (top-most selected cell)
-        startRow = selectedIndexes.first().row(); 
-        for (const QModelIndex &index : selectedIndexes) {
-            startRow = std::min(startRow, index.row());
-        }
-    }
-    
-    // Ensure startRow is within bounds [0, 255]
-    if (startRow < 0) startRow = 0;
-    if (startRow >= 256) {
-        QMessageBox::warning(this, tr("Insertion Error"), tr("Selected row is out of bounds for the table."));
-        return;
-    }
-
-    // Block signals to prevent recursive calls from handleTableItemChanged
-    QSignalBlocker blocker(m_conversionTable);
-    
-    // Iterate through the series and update the map and table
-    for (int i = 0; i < series.size(); ++i) {
-        int currentRow = startRow + i;
-        if (currentRow > 255) break;
-
-        const QString &displayChar = series[i];
-        
-        // 1. Update internal map
-        // Ensure only the first character is stored for mapping consistency
-        QString charToStore = displayChar.left(1); 
-        if (charToStore.isEmpty()) charToStore = ".";
-        m_charMap[currentRow] = charToStore;
-        
-        // 2. Update QTableWidget
-        QTableWidgetItem *item = m_conversionTable->item(currentRow, 1);
-        if (item) {
-            item->setText(charToStore);
-        }
-    }
-    
-    // Notify the hex editor to redraw with the new map
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
-    }
-}
-
-// DEFINICIÓN RESTAURADA
-void hexandtabler::on_actionInsertLatinUpper_triggered() {
-    QList<QString> series;
-    for (int i = 0; i < 26; ++i) { // 'A' (65) to 'Z' (90)
-        series.append(QString(QChar('A' + i)));
-    }
-    insertSeries(series);
-}
-
-// DEFINICIÓN RESTAURADA
-void hexandtabler::on_actionInsertLatinLower_triggered() {
-    QList<QString> series;
-    for (int i = 0; i < 26; ++i) { // 'a' (97) to 'z' (122)
-        series.append(QString(QChar('a' + i)));
-    }
-    insertSeries(series);
-}
-
-// DEFINICIÓN RESTAURADA
-void hexandtabler::on_actionInsertHiragana_triggered() {
-    QList<QString> series;
-    // Hiragana basic set from U+3041 (あ) for 50 characters
-    const int startCode = 0x3041; 
-    const int count = 50; 
-    for (int i = 0; i < count; ++i) {
-        series.append(QString(QChar(startCode + i)));
-    }
-    insertSeries(series);
-}
-
-// DEFINICIÓN RESTAURADA
-void hexandtabler::on_actionInsertKatakana_triggered() {
-    QList<QString> series;
-    // Katakana basic set from U+30A1 (ア) for 50 characters
-    const int startCode = 0x30A1;
-    const int count = 50; 
-    for (int i = 0; i < count; ++i) {
-        series.append(QString(QChar(startCode + i)));
-    }
-    insertSeries(series);
-}
-
-// --------------------------------------------------------------------------------
-// --- LOGIC AND ASSISTANCE FUNCTIONS (Existing Code Below) ---
-// --------------------------------------------------------------------------------
-
-void hexandtabler::setupConversionTable() {
-    if (!m_conversionTable) return;
-    
-    m_conversionTable->setRowCount(256);
-    // Set 2 columns (Hex and Assigned)
-    m_conversionTable->setColumnCount(2);
-    
-    QStringList headers;
-    headers << tr("Hex") << tr("Assigned"); 
-    m_conversionTable->setHorizontalHeaderLabels(headers);
-    
-    m_conversionTable->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-    m_conversionTable->verticalHeader()->setVisible(false);
-    
-    // Allow editing on single click (selection) and key press
-    m_conversionTable->setEditTriggers(QAbstractItemView::SelectedClicked | QAbstractItemView::AnyKeyPressed); 
-
-    // Get table font and ensure it is normal weight
-    QFont normalFont = m_conversionTable->font();
-    normalFont.setWeight(QFont::Normal);
-
-    for (int i = 0; i < 256; ++i) {
-        QTableWidgetItem *hexItem = new QTableWidgetItem(QString("%1").arg(i, 2, 16, QChar('0')).toUpper());
-        hexItem->setTextAlignment(Qt::AlignCenter);
-        // Prevent editing of Hex column
-        hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable); 
-        hexItem->setFont(normalFont); // Apply normal weight
-        m_conversionTable->setItem(i, 0, hexItem); // Column 0: Hex
-
-        char c = (char)i;
-        // Default: dot for non-printable characters, standard char for ASCII
-        bool isSafePrint = (i >= 0x20 && i <= 0x7E);
-        QString asciiChar = isSafePrint ? QString(c) : QString("."); 
-        
-        QTableWidgetItem *asciiItem = new QTableWidgetItem(asciiChar);
-        asciiItem->setTextAlignment(Qt::AlignCenter);
-        asciiItem->setFont(normalFont); // Apply normal weight
-        m_conversionTable->setItem(i, 1, asciiItem); // Column 1: Assigned
-        
-        // Initialize the internal map with the default value
-        m_charMap[i] = asciiChar;
-    }
-}
-
-void hexandtabler::loadFile(const QString &filePath) { 
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::critical(this, tr("Error"), tr("Cannot open file: ") + file.errorString());
-        return;
-    }
-
-    m_fileData = file.readAll(); 
-    file.close();
-    
-    m_currentFilePath = filePath;
-    setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(filePath).fileName()));
-    prependToRecentFiles(filePath);
-    
-    m_hexEditorArea->setHexData(m_fileData);
-
-    m_undoStack.clear(); 
-    m_redoStack.clear();
-    pushUndoState(); 
-    
-    m_isModified = false;
-    ui->actionSave->setEnabled(false);
-}
-
-// DEFINICIÓN RESTAURADA
-bool hexandtabler::saveCurrentFile() {
-    // If we have a path, call the helper to save.
-    if (!m_currentFilePath.isEmpty()) {
-        return saveDataToFile(m_currentFilePath);
-    }
-    // If no path, trigger Save As... dialog.
-    return saveFileAs();
-}
-
-bool hexandtabler::maybeSave() {
-    if (m_isModified) {
-        QMessageBox::StandardButton ret;
-        ret = QMessageBox::warning(this, tr("Application"),
-                                   tr("The document has been modified.\n"
-                                      "Do you want to save your changes?"),
-                                   QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-        
-        if (ret == QMessageBox::Save) {
-            return saveCurrentFile();
-        } else if (ret == QMessageBox::Cancel) {
-            return false;
-        }
-    }
-    return true;
-}
-
-void hexandtabler::refreshModelFromArea() {
-    // Get the latest data from the editor widget
-    m_fileData = m_hexEditorArea->hexData(); 
-}
 
 void hexandtabler::pushUndoState() {
-    refreshModelFromArea(); 
+    if (!m_hexEditorArea) return;
+    
+    m_fileData = m_hexEditorArea->hexData();
     
     if (!m_undoStack.isEmpty() && m_undoStack.last() == m_fileData) {
         return; 
     }
     
-    if (!m_redoStack.isEmpty()) {
-        m_redoStack.clear();
-    }
-    
     m_undoStack.append(m_fileData);
+    
     if (m_undoStack.size() > MAX_UNDO_STATES) {
         m_undoStack.removeFirst();
     }
-    
+    m_redoStack.clear(); 
     updateUndoRedoActions();
 }
 
 void hexandtabler::updateUndoRedoActions() {
-    if (undoAct) {
-        undoAct->setEnabled(!m_undoStack.isEmpty());
+    if (ui->actionUndo) {
+        ui->actionUndo->setEnabled(m_undoStack.size() > 1);
     }
-    if (redoAct) {
-        redoAct->setEnabled(!m_redoStack.isEmpty());
+    if (ui->actionRedo) {
+        ui->actionRedo->setEnabled(!m_redoStack.isEmpty());
+    }
+    // We rely on handleDataEdited to set m_isModified, and maybeSave() check is essential.
+}
+
+void hexandtabler::on_actionUndo_triggered() {
+    if (!m_hexEditorArea || m_undoStack.size() <= 1) return;
+    
+    QByteArray currentState = m_undoStack.takeLast();
+    m_redoStack.append(currentState);
+    
+    QByteArray newState = m_undoStack.last();
+    m_fileData = newState;
+    m_hexEditorArea->setHexData(m_fileData);
+    
+    m_isModified = true; 
+    updateUndoRedoActions();
+}
+
+void hexandtabler::on_actionRedo_triggered() {
+    if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
+    
+    QByteArray newState = m_redoStack.takeLast();
+    
+    m_undoStack.append(newState);
+    m_fileData = newState;
+    m_hexEditorArea->setHexData(m_fileData);
+    
+    m_isModified = true;
+    updateUndoRedoActions();
+}
+
+// --------------------------------------------------------------------------------
+// --- FIND/REPLACE SLOTS AND LOGIC ---
+// --------------------------------------------------------------------------------
+
+void hexandtabler::on_actionFind_triggered() {
+    if (!m_findReplaceDialog) return;
+    m_findReplaceDialog->setFindMode();
+    m_findReplaceDialog->show();
+    m_findReplaceDialog->activateWindow();
+}
+
+void hexandtabler::on_actionReplace_triggered() {
+    if (!m_findReplaceDialog) return;
+    m_findReplaceDialog->setReplaceMode();
+    m_findReplaceDialog->show();
+    m_findReplaceDialog->activateWindow();
+}
+
+void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards) {
+    if (!m_hexEditorArea || needle.isEmpty()) return;
+    
+    QByteArray data = m_hexEditorArea->hexData();
+    qint64 dataSize = data.size();
+    qint64 needleSize = needle.size();
+    
+    qint64 startBytePos = m_hexEditorArea->cursorPosition() / 2; 
+
+    QByteArray searchData = caseSensitive ? data : data.toLower();
+    QByteArray searchNeedle = caseSensitive ? needle : needle.toLower();
+
+    qint64 foundPos = -1;
+    
+    if (!backwards) {
+        foundPos = searchData.indexOf(searchNeedle, startBytePos);
+        
+        if (foundPos == -1 && wrap) {
+            foundPos = searchData.indexOf(searchNeedle, 0);
+        }
+        
+    } else {
+        qint64 searchStart = startBytePos > 0 ? startBytePos - 1 : dataSize - 1;
+        foundPos = searchData.lastIndexOf(searchNeedle, searchStart);
+        
+        if (foundPos == -1 && wrap) {
+            foundPos = searchData.lastIndexOf(searchNeedle, dataSize - 1);
+        }
+    }
+
+    if (foundPos != -1) {
+        m_hexEditorArea->goToOffset(foundPos);
+        m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needleSize) * 2);
+    } else {
+        QMessageBox::information(this, tr("Find Result"), tr("Search pattern not found."));
     }
 }
 
-void hexandtabler::closeEvent(QCloseEvent *event) {
-    if (maybeSave()) {
-        QSettings settings(organizationName, applicationName);
-        settings.setValue("geometry", saveGeometry());
-        settings.setValue("windowState", saveState());
+void hexandtabler::replaceOne() {
+    if (!m_hexEditorArea || !m_findReplaceDialog) return;
+
+    QByteArray needle = convertSearchString(m_findReplaceDialog->findText(), m_findReplaceDialog->searchType());
+    QByteArray replacement = convertSearchString(m_findReplaceDialog->replaceText(), m_findReplaceDialog->searchType());
+
+    if (needle.isEmpty()) {
+        QMessageBox::warning(this, tr("Replace Error"), tr("Invalid search pattern."));
+        return;
+    }
+    
+    bool caseSensitive = m_findReplaceDialog->isCaseSensitive();
+    bool wrap = m_findReplaceDialog->isWrapped();
+
+    qint64 currentBytePos = m_hexEditorArea->cursorPosition() / 2; 
+    
+    QByteArray data = m_hexEditorArea->hexData();
+
+    QByteArray currentDataCheck = caseSensitive ? data.mid(currentBytePos, needle.size()) : data.mid(currentBytePos, needle.size()).toLower();
+    QByteArray searchNeedle = caseSensitive ? needle : needle.toLower();
+
+    bool replaced = false;
+    if (currentDataCheck == searchNeedle) {
+        data.replace(currentBytePos, needle.size(), replacement);
+        m_hexEditorArea->setHexData(data);
+        pushUndoState();
         
-        event->accept();
+        m_hexEditorArea->goToOffset(currentBytePos + replacement.size());
+        m_hexEditorArea->setSelection(-1, -1); 
+        
+        replaced = true;
+    }
+
+    qint64 searchStart = replaced ? currentBytePos + replacement.size() : currentBytePos;
+    
+    QByteArray searchData = caseSensitive ? m_hexEditorArea->hexData() : m_hexEditorArea->hexData().toLower();
+    qint64 foundPos = searchData.indexOf(searchNeedle, searchStart);
+    
+    if (foundPos != -1) {
+        m_hexEditorArea->goToOffset(foundPos);
+        m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
+    } else if (wrap) {
+        foundPos = searchData.indexOf(searchNeedle, 0);
+        if (foundPos != -1) {
+             m_hexEditorArea->goToOffset(foundPos);
+             m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
+        } else {
+            QMessageBox::information(this, tr("Replace Result"), tr("No more matches found."));
+        }
     } else {
-        event->ignore();
+        QMessageBox::information(this, tr("Replace Result"), tr("No more matches found."));
+    }
+}
+
+void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replacement) {
+    if (!m_hexEditorArea || needle.isEmpty()) return;
+
+    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray searchNeedle = m_findReplaceDialog->isCaseSensitive() ? needle : needle.toLower();
+    
+    if (!m_findReplaceDialog->isCaseSensitive()) {
+        int count = 0;
+        QByteArray temp_data = data;
+        
+        QByteArray lower_data = data.toLower(); 
+        qint64 pos = lower_data.indexOf(searchNeedle, 0);
+        
+        qint64 offset = 0; 
+        
+        while (pos != -1) {
+            // Note: This non-case-sensitive replace logic for QByteArray can be complex 
+            // if replacement size differs from needle size, as it changes indexes.
+            // A more robust implementation would recalculate indices or use regex, 
+            // but for simple byte strings, this approach is often sufficient if 
+            // the focus is on the data structure rather than high performance regex.
+            temp_data.replace(pos + offset, needle.size(), replacement);
+            
+            offset += (replacement.size() - needle.size()); 
+            
+            pos = lower_data.indexOf(searchNeedle, pos + needle.size());
+            count++;
+        }
+        
+        data = temp_data;
+        
+        if (count > 0) {
+            QMessageBox::information(this, tr("Replace All"), tr("Replaced %n occurrence(s).", "", count));
+        } else {
+            QMessageBox::information(this, tr("Replace All"), tr("No occurrences found."));
+        }
+        
+    } else {
+        int count = data.count(needle);
+        
+        if (count > 0) {
+            data.replace(needle, replacement);
+            QMessageBox::information(this, tr("Replace All"), tr("Replaced %n occurrence(s).", "", count));
+        } else {
+            QMessageBox::information(this, tr("Replace All"), tr("No occurrences found."));
+        }
+    }
+
+    m_hexEditorArea->setHexData(data);
+    pushUndoState();
+    m_hexEditorArea->goToOffset(0); 
+    m_hexEditorArea->setSelection(-1, -1);
+}
+
+// --------------------------------------------------------------------------------
+// --- TABLE LOGIC ---
+// --------------------------------------------------------------------------------
+
+void hexandtabler::setupConversionTable() {
+    if (!m_conversionTable) return;
+    
+    m_conversionTable->setRowCount(256); 
+    m_conversionTable->setColumnCount(2); 
+    m_conversionTable->setHorizontalHeaderLabels({tr("Hex"), tr("Assigned")});
+    m_conversionTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    m_conversionTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_conversionTable->verticalHeader()->setVisible(false);
+    m_conversionTable->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::AnyKeyPressed);
+    m_conversionTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_conversionTable->setFont(QFont("Monospace", 10)); 
+
+    for (int i = 0; i < 256; ++i) {
+        // Columna 0: Hex Value 
+        QTableWidgetItem *hexItem = new QTableWidgetItem(QString("%1").arg(i, 2, 16, QChar('0')).toUpper());
+        hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable);
+        m_conversionTable->setItem(i, 0, hexItem);
+        
+        // Columna 1: Assigned Character 
+        QString defaultChar;
+        QChar c = QChar(i);
+        
+        // Corrección del error: Usar QChar::isPrint()
+        if (!c.isPrint()) { 
+            defaultChar = ".";
+        } else {
+            defaultChar = QString(c);
+        }
+        
+        QTableWidgetItem *charItem = new QTableWidgetItem(defaultChar);
+        m_conversionTable->setItem(i, 1, charItem);
+        
+        m_charMap[i] = defaultChar;
+    }
+}
+
+void hexandtabler::on_actionToggleTable_triggered() {
+    if (m_tableDock) {
+        m_tableDock->setVisible(ui->actionToggleTable->isChecked());
+    }
+}
+
+void hexandtabler::on_actionLoadTable_triggered() {
+    QString fileName = QFileDialog::getOpenFileName(this, tr("Load Conversion Table"), m_currentTablePath.isEmpty() ? QDir::homePath() : QFileInfo(m_currentTablePath).absoluteDir().path(), tr("Table Files (*.tbl);;All Files (*.*)"));
+    if (fileName.isEmpty()) {
+        return;
+    }
+
+    if (loadTableFile(fileName)) {
+        m_currentTablePath = fileName;
+        QMessageBox::information(this, tr("Table Loaded"), tr("Conversion table loaded successfully from %1.").arg(QFileInfo(fileName).fileName()));
+    } else {
+        QMessageBox::critical(this, tr("Error"), tr("Failed to load conversion table from %1.").arg(QFileInfo(fileName).fileName()));
+    }
+}
+
+void hexandtabler::on_actionSaveTable_triggered() {
+    if (m_currentTablePath.isEmpty()) {
+        on_actionSaveTableAs_triggered();
+    } else {
+        saveTableFile(m_currentTablePath);
+    }
+}
+
+void hexandtabler::on_actionSaveTableAs_triggered() {
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Save Conversion Table As"), m_currentTablePath.isEmpty() ? QDir::homePath() : QFileInfo(m_currentTablePath).absoluteDir().path(), tr("Table Files (*.tbl);;All Files (*.*)"));
+    if (fileName.isEmpty()) {
+        return; 
+    }
+    
+    if (!fileName.toLower().endsWith(".tbl")) {
+        fileName += ".tbl";
+    }
+
+    if (saveTableFile(fileName)) {
+        m_currentTablePath = fileName;
+    }
+}
+
+bool hexandtabler::saveTableFile(const QString &filePath) {
+    if (!m_conversionTable) return false;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(this, tr("Error"), tr("Could not write table file %1:\n%2.").arg(filePath).arg(file.errorString()));
+        return false;
+    }
+
+    QTextStream out(&file);
+    out << "# Conversion Table File\n";
+    
+    for (int i = 0; i < 256; ++i) {
+        out << QString("%1=%2\n").arg(i, 2, 16, QChar('0')).toUpper().arg(m_charMap[i]);
+    }
+
+    file.close();
+    return true;
+}
+
+bool hexandtabler::loadTableFile(const QString &filePath) {
+    if (!m_conversionTable) return false;
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+
+    QTextStream in(&file);
+    
+    QString newMap[256];
+    
+    for (int i = 0; i < 256; ++i) {
+        newMap[i] = m_charMap[i];
+    }
+    
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith("#")) continue;
+
+        QStringList parts = line.split("=");
+        if (parts.size() == 2) {
+            QString hexCode = parts.at(0).trimmed();
+            QString charStr = parts.at(1).trimmed();
+            
+            bool ok;
+            int byteValue = hexCode.toInt(&ok, 16); 
+
+            if (ok && byteValue >= 0 && byteValue <= 255) {
+                QString displayChar = charStr.left(1); 
+                if (displayChar.isEmpty()) {
+                    displayChar = "."; 
+                }
+                newMap[byteValue] = displayChar;
+            }
+        }
+    }
+    file.close();
+
+    QSignalBlocker blocker(m_conversionTable);
+    for (int i = 0; i < 256; ++i) {
+        m_charMap[i] = newMap[i];
+        QTableWidgetItem *item = m_conversionTable->item(i, 1);
+        if (item) {
+            item->setText(m_charMap[i]);
+        }
+    }
+    
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+
+    return true;
+}
+
+void hexandtabler::insertSeries(const QList<QString> &series) {
+    if (!m_conversionTable || series.isEmpty()) return;
+
+    QModelIndexList selectedIndexes = m_conversionTable->selectionModel()->selectedIndexes();
+    int startRow = 0;
+    if (!selectedIndexes.isEmpty()) {
+        startRow = selectedIndexes.at(0).row();
+        for (const QModelIndex &index : selectedIndexes) {
+            if (index.row() < startRow) {
+                startRow = index.row();
+            }
+        }
+    }
+
+    QSignalBlocker blocker(m_conversionTable);
+    
+    for (int i = 0; i < series.size(); ++i) {
+        int currentRow = startRow + i;
+        if (currentRow >= 0 && currentRow < 256) {
+            QString character = series.at(i).left(1);
+            if (character.isEmpty()) character = ".";
+
+            QTableWidgetItem *item = m_conversionTable->item(currentRow, 1);
+            if (item) {
+                item->setText(character);
+            }
+            
+            m_charMap[currentRow] = character;
+        }
+    }
+
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+}
+
+void hexandtabler::on_actionInsertLatinUpper_triggered() {
+    QList<QString> series;
+    for (int i = 0; i < 26; ++i) {
+        series.append(QString(QChar('A' + i)));
+    }
+    insertSeries(series);
+}
+
+void hexandtabler::on_actionInsertLatinLower_triggered() {
+    QList<QString> series;
+    for (int i = 0; i < 26; ++i) {
+        series.append(QString(QChar('a' + i)));
+    }
+    insertSeries(series);
+}
+
+void hexandtabler::on_actionInsertHiragana_triggered() {
+    QList<QString> series;
+    int startCode = 0x3042; 
+    int count = 50; 
+    for (int i = 0; i < count; ++i) {
+        series.append(QString(QChar(startCode + i)));
+    }
+    insertSeries(series);
+}
+
+void hexandtabler::on_actionInsertKatakana_triggered() {
+    QList<QString> series;
+    int startCode = 0x30A2; 
+    int count = 50; 
+    for (int i = 0; i < count; ++i) {
+        series.append(QString(QChar(startCode + i)));
+    }
+    insertSeries(series);
+}
+
+// <<<<<<<<<<<<<<<<<<<< NUEVA FUNCIÓN PARA EL ALFABETO CIRÍLICO >>>>>>>>>>>>>>>>>>>>>>
+void hexandtabler::on_actionInsertCyrillic_triggered() {
+    QList<QString> series;
+    int startCode = 0x0410; // Letra mayúscula Cirílica A (А)
+    int endCode = 0x042F;   // Letra mayúscula Cirílica Ya (Я)
+    
+    for (int i = startCode; i <= endCode; ++i) {
+        series.append(QString(QChar(i)));
+    }
+    // Nota: Esta es la serie principal de 32 letras mayúsculas (А-Я).
+    
+    insertSeries(series);
+}
+// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+// --------------------------------------------------------------------------------
+// --- EVENT HANDLERS ---
+// --------------------------------------------------------------------------------
+
+void hexandtabler::handleDataEdited() {
+    m_isModified = true;
+    pushUndoState();
+}
+
+void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
+    if (!m_conversionTable || !item || item->column() != 1) {
+        return;
+    }
+    
+    int row = item->row();
+    QString newChar = item->text();
+
+    if (newChar.isEmpty()) {
+        newChar = ".";
+    }
+
+    QString finalChar = newChar.left(1);
+
+    QSignalBlocker blocker(m_conversionTable);
+    if (item->text() != finalChar) {
+        item->setText(finalChar);
+    }
+    
+    m_charMap[row] = finalChar;
+    
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+}
+
+// --------------------------------------------------------------------------------
+// --- RECENT FILES LOGIC ---
+// --------------------------------------------------------------------------------
+
+void hexandtabler::openRecentFile() {
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (action) {
+        if (maybeSave())
+            loadFile(action->data().toString());
     }
 }
 
@@ -804,14 +1058,19 @@ void hexandtabler::createRecentFileActions() {
 void hexandtabler::loadRecentFiles() {
     QSettings settings(organizationName, applicationName);
     QStringList files = settings.value("recentFiles").toStringList();
-
-    for (int i = 0; i < MaxRecentFiles; ++i) {
-        if (i < files.size()) {
-            recentFileActions[i]->setData(files[i]);
-        } else {
-            recentFileActions[i]->setData(QString());
+    
+    QStringList existingFiles;
+    for (const QString &filePath : qAsConst(files)) {
+        if (QFile::exists(filePath)) {
+            existingFiles.append(filePath);
         }
     }
+
+    if (existingFiles != files) {
+        settings.setValue("recentFiles", existingFiles);
+    }
+
+    updateRecentFileActions();
 }
 
 void hexandtabler::updateRecentFileActions() {
@@ -824,22 +1083,27 @@ void hexandtabler::updateRecentFileActions() {
     QList<QAction*> actions = ui->menuFile->actions();
     
     for (QAction *action : actions) {
-        if (action->isSeparator() && ui->menuFile->actions().indexOf(action) > ui->menuFile->actions().indexOf(ui->actionSave)) { 
+        // Find separator after 'Save As'
+        if (action->isSeparator() && ui->menuFile->actions().indexOf(action) > ui->menuFile->actions().indexOf(ui->actionSaveAs)) { 
              separator = action;
              break;
         }
     }
 
+    // If no separator found (shouldn't happen if UI is correct), insert one before Exit
     if (!separator) {
         separator = ui->menuFile->insertSeparator(ui->actionExit);
     }
     
     separator->setVisible(numRecentFiles > 0);
 
+    // Remove old actions (they are dynamically inserted after the Save/SaveAs actions)
     for (int i = 0; i < MaxRecentFiles; ++i) {
+        // Remove from the menu if they were added
         ui->menuFile->removeAction(recentFileActions[i]);
     }
 
+    // Insert new actions
     for (int i = 0; i < numRecentFiles; ++i) {
         QString text = QString("&%1 %2")
             .arg(i + 1)
@@ -855,12 +1119,24 @@ void hexandtabler::updateRecentFileActions() {
 void hexandtabler::prependToRecentFiles(const QString &filePath) {
     QSettings settings(organizationName, applicationName);
     QStringList files = settings.value("recentFiles").toStringList();
+    
     files.removeAll(filePath);
+    
     files.prepend(filePath);
+    
     while (files.size() > MaxRecentFiles)
         files.removeLast();
 
     settings.setValue("recentFiles", files);
-
     updateRecentFileActions();
 }
+
+void hexandtabler::refreshModelFromArea() {
+    // This function is not required as all updates are driven by signals/slots
+}
+
+// --------------------------------------------------------------------------------
+// --- MOC INCLUDE FIX ---
+// --------------------------------------------------------------------------------
+
+#include "hexandtabler.moc"

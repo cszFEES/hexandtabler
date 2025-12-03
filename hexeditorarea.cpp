@@ -9,6 +9,8 @@
 #include <QClipboard> 
 #include <QKeyEvent> 
 #include <QPalette> 
+#include <QDebug> 
+#include <QChar> // Asegurar que QChar esté incluido si se utiliza
 
 HexEditorArea::HexEditorArea(QWidget *parent)
     : QAbstractScrollArea(parent)
@@ -21,8 +23,18 @@ HexEditorArea::HexEditorArea(QWidget *parent)
     calculateMetrics(); 
     m_editMode = HexMode; 
     
+    // Initialize selection members
+    m_selectionEnd = -1;
+    m_selectionStart = -1;
+
     setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    
+    // Enable mouse tracking for selection dragging
+    setMouseTracking(true); 
+    
+    // Focus policy set to StrongFocus to allow keyboard input
+    setFocusPolicy(Qt::StrongFocus);
 }
 
 void HexEditorArea::setCharMapping(const QString (&mapping)[256]) {
@@ -44,13 +56,12 @@ void HexEditorArea::calculateMetrics() {
     m_charHeight = fm.height();
     
     const int OFFSET_SLOTS = 10;          
-    const int HEX_SLOTS_PER_BYTE = 3;     
-    const int SEPARATOR_SLOTS = 3;        
+    const int HEX_SLOTS_PER_BYTE = 3;     // Two hex chars + space
+    const int SEPARATOR_SLOTS = 3;        // Space between hex and ASCII
     
     const int HEX_START_SLOT = OFFSET_SLOTS;
     const int HEX_BLOCK_SLOTS = m_bytesPerLine * HEX_SLOTS_PER_BYTE; 
     
-    // CORRECCIÓN: Cambiado de HEX_START_SLOTS a HEX_START_SLOT
     const int ASCII_START_SLOT = HEX_START_SLOT + HEX_BLOCK_SLOTS + SEPARATOR_SLOTS;
     const int TOTAL_SLOTS = ASCII_START_SLOT + m_bytesPerLine; 
     
@@ -61,50 +72,105 @@ void HexEditorArea::calculateMetrics() {
     viewport()->setMinimumWidth(m_lineLength); 
 }
 
+void HexEditorArea::updateViewMetrics() {
+    calculateMetrics();
+    // Update scroll bar range
+    int totalLines = (m_data.size() + m_bytesPerLine - 1) / m_bytesPerLine;
+    verticalScrollBar()->setRange(0, std::max(0, totalLines * m_charHeight - viewport()->height()));
+    viewport()->update();
+}
+
 void HexEditorArea::setHexData(const QByteArray &data) {
     m_data = data;
-    m_cursorPos = 0;
+    setCursorPosition(0); 
+    clearSelection();
     updateViewMetrics();
+    viewport()->update();
 }
 
-QByteArray HexEditorArea::hexData() const { 
-    return m_data; 
+QByteArray HexEditorArea::hexData() const {
+    return m_data;
 }
 
-
-void HexEditorArea::updateViewMetrics() {
-    calculateMetrics(); 
+void HexEditorArea::goToOffset(quint64 offset) {
+    if (offset >= (quint64)m_data.size()) {
+        offset = m_data.size();
+    }
+    setCursorPosition(offset * 2);
     
-    int totalLines = std::max(
-        (m_data.size() + m_bytesPerLine - 1) / m_bytesPerLine, 
-        1 
-    );
-    int totalHeight = totalLines * m_charHeight;
-    
+    // Scroll to position
+    int line = offset / m_bytesPerLine;
+    int lineY = line * m_charHeight;
     int visibleHeight = viewport()->height();
-    verticalScrollBar()->setRange(0, std::max(0, totalHeight - visibleHeight));
-    verticalScrollBar()->setPageStep(visibleHeight);
-    verticalScrollBar()->setSingleStep(m_charHeight);
+    int scrollY = verticalScrollBar()->value();
+
+    if (lineY < scrollY) {
+        verticalScrollBar()->setValue(lineY);
+    } else if (lineY + m_charHeight > scrollY + visibleHeight) {
+        verticalScrollBar()->setValue(lineY + m_charHeight - visibleHeight);
+    }
+}
+
+void HexEditorArea::setSelection(int startPos, int endPos) {
+    // Ensure positions are valid and on nibble boundaries
+    startPos = std::max(0, startPos);
+    endPos = std::min(m_data.size() * 2, endPos);
+    
+    // Asegurar que la selección comienza y termina en un límite de byte (posición par de nibble)
+    startPos = (startPos / 2) * 2;
+    endPos = (endPos / 2) * 2;
+    // Si la selección es de arrastre, el final puede ser 2 nibbles más (para incluir el último byte)
+    // El mouseMoveEvent se encarga de ajustar el final para incluir el byte.
+
+    if (startPos > endPos) std::swap(startPos, endPos);
+
+    m_selectionStart = startPos;
+    m_selectionEnd = endPos;
+    
+    // Selection is only cleared if they are exactly the same
+    if (m_selectionStart == m_selectionEnd) {
+        clearSelection();
+    }
     
     viewport()->update();
 }
 
-// Function to navigate to a specific byte offset (Go To)
-void HexEditorArea::goToOffset(quint64 offset) {
-    // Offset is a byte index. Cursor position is a nibble index (offset * 2)
-    int nibbleIndex = (int)(offset * 2);
+void HexEditorArea::clearSelection() {
+    m_selectionStart = -1;
+    m_selectionEnd = -1;
+    // Do NOT update cursor position here, as it's often used with setCursorPosition
+}
+
+void HexEditorArea::setCursorPosition(int newPos) {
+    // Ensure newPos is within bounds
+    int maxPos = m_data.size() * 2;
+    newPos = std::max(0, std::min(maxPos, newPos));
     
-    // Ensure the offset does not exceed the data size (2 nibbles per byte)
-    if (nibbleIndex > m_data.size() * 2) {
-        nibbleIndex = m_data.size() * 2;
+    // MODIFICACIÓN: Siempre forzar el cursor a un límite de byte (posición par de nibble)
+    newPos = (newPos / 2) * 2; 
+
+    if (newPos == m_cursorPos) return;
+    
+    m_cursorPos = newPos; 
+    
+    // Auto-scroll logic
+    int offset = m_cursorPos / 2;
+    int line = offset / m_bytesPerLine;
+    int lineY = line * m_charHeight;
+    int scrollY = verticalScrollBar()->value();
+    int visibleHeight = viewport()->height();
+    
+    if (lineY < scrollY) {
+        verticalScrollBar()->setValue(lineY);
+    } else if (lineY + m_charHeight > scrollY + visibleHeight) {
+        verticalScrollBar()->setValue(lineY + m_charHeight - visibleHeight);
     }
-    
-    // Set the cursor position, which handles scrolling and updating
-    setCursorPosition(nibbleIndex);
+
+    viewport()->update();
 }
 
 // ----------------------------------------------------------------------
-// --- Paint Event (Resaltado Corregido) ---
+// --- Events ---
 // ----------------------------------------------------------------------
 
 void HexEditorArea::paintEvent(QPaintEvent *event) {
@@ -113,379 +179,229 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
     
     int scrollY = verticalScrollBar()->value();
     int firstVisibleLine = scrollY / m_charHeight;
-    int firstVisibleLineY = firstVisibleLine * m_charHeight - scrollY;
+    int lastVisibleLine = (scrollY + viewport()->height()) / m_charHeight;
     
-    int bytesProcessed = firstVisibleLine * m_bytesPerLine;
-    int currentY = firstVisibleLineY;
+    int totalBytes = m_data.size();
     
-    // --- COLORES ---
-    // Colores basados en la paleta actual
-    QColor offsetColor = palette().color(QPalette::Text).darker(150); 
-    QColor hexColor = palette().color(QPalette::Text); 
-    QColor asciiColor = palette().color(QPalette::Text).lighter(150); 
-    
-    // Primary/Active color (Color para el resaltado)
-    // Este color se aplica a AMBOS lados para igualar la prominencia.
-    QColor selectionColor = QColor(42, 130, 218).lighter(120); 
+    QPalette pal = palette();
+    int cursorByteIndex = m_cursorPos / 2;
 
-    while (currentY < viewport()->height() && bytesProcessed < m_data.size()) {
-        
-        // --- 1. Draw Offset (Address) ---
-        QString offsetText = QString("%1:").arg(bytesProcessed, 8, 16, QChar('0')).toUpper();
-        QRect offsetRect(0, currentY, m_charWidth * 10, m_charHeight);
-        
-        painter.setPen(offsetColor);
-        painter.drawText(offsetRect, Qt::AlignRight | Qt::AlignVCenter, offsetText);
-        
-        // --- 2. Draw Separator ( | ) ---
-        int separatorPosX = m_hexStartCol + m_bytesPerLine * (3 * m_charWidth);
-        QRect separatorRect(separatorPosX, currentY, m_charWidth * 3, m_charHeight);
-        painter.setPen(palette().color(QPalette::Text).darker(120)); 
-        painter.drawText(separatorRect, Qt::AlignCenter, "|");
+    for (int line = firstVisibleLine; line <= lastVisibleLine; ++line) {
+        int startByteIndex = line * m_bytesPerLine;
+        if (startByteIndex >= totalBytes) break;
 
+        int currentY = line * m_charHeight - scrollY;
 
-        // --- 3. Draw HEX and ASCII Area ---
-        int lineEnd = std::min(bytesProcessed + m_bytesPerLine, m_data.size());
-        
-        // El cursor siempre apunta al inicio de un byte (nibble par) ya que el movimiento es por byte.
-        int cursorByteIndex = m_cursorPos / 2;
+        // --- 1. Draw Offset ---
+        QString offsetStr = QString("%1").arg(startByteIndex, 8, 16, QChar('0')).toUpper();
+        painter.setPen(pal.color(QPalette::WindowText));
+        painter.drawText(0, currentY, m_charWidth * 10, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, offsetStr);
 
-        for (int i = bytesProcessed; i < lineEnd; ++i) {
-            unsigned char byte = (unsigned char)m_data.at(i);
+        // --- 2. Draw Hex and ASCII data ---
+        for (int i = 0; i < m_bytesPerLine; ++i) {
+            int byteIndex = startByteIndex + i;
+            if (byteIndex >= totalBytes) break;
             
-            // HEX Area
-            QString hexStr = QString("%1 ").arg(byte, 2, 16, QChar('0')).toUpper(); // XX<space>
+            unsigned char byte = (unsigned char)m_data.at(byteIndex);
+            int currentNibbleStart = byteIndex * 2;
+            int currentNibbleEnd = currentNibbleStart + 2;
             
-            int byteOffset = i - bytesProcessed;
-            int hexPosX = m_hexStartCol + byteOffset * (3 * m_charWidth);
-            QRect hexRect(hexPosX, currentY, 3 * m_charWidth, m_charHeight);
+            // --- LÓGICA DE RESALTADO SINCRONIZADA (HEX y ASCII) ---
+            bool isCursorByte = (cursorByteIndex == byteIndex);
+            // La selección cubre el byte si su inicio es anterior al final del byte y viceversa.
+            bool isSelected = (m_selectionStart != -1 && 
+                               std::max(m_selectionStart, currentNibbleStart) < std::min(m_selectionEnd, currentNibbleEnd));
 
-            // Highlight Logic: Siempre resalta el byte completo en el lado HEX
-            if (cursorByteIndex == i) { 
-                // 1. Highlight the equivalent BYTE in ASCII (Primary color)
-                int asciiPosX = m_asciiStartCol + byteOffset * m_charWidth;
-                painter.fillRect(asciiPosX, currentY, m_charWidth, m_charHeight, selectionColor); 
-                
-                // 2. Highlight the FULL BYTE in HEX (Primary color)
-                // Se resaltan 2 caracteres (los dos nibbles) con el color primario
-                painter.fillRect(hexPosX, currentY, 2 * m_charWidth, m_charHeight, selectionColor); 
+            QColor bgColor = pal.color(QPalette::Base);
+            if (isSelected) {
+                bgColor = pal.color(QPalette::Highlight);
+            } else if (isCursorByte) {
+                // Usar Midlight (Mid) para el cursor cuando no hay selección
+                bgColor = pal.color(QPalette::Midlight); 
             }
-            // End of Highlighting
 
-            // Draw HEX text
-            painter.setPen(hexColor);
-            painter.drawText(hexRect, Qt::AlignLeft | Qt::AlignVCenter, hexStr);
+            // Dibujar fondo para HEX (3 * m_charWidth para XX )
+            painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, bgColor);
+            // Dibujar fondo para ASCII (1 * m_charWidth para X)
+            painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, bgColor);
+            
+            // c) HEX Area Drawing
+            QString hexStr = QString("%1 ").arg(byte, 2, 16, QChar('0')).toUpper();
+            
+            // Si está seleccionado/cursor, el texto debe contrastar con el Highlight/Midlight
+            if (isSelected || isCursorByte) {
+                 painter.setPen(pal.color(QPalette::HighlightedText));
+            } else {
+                 painter.setPen(pal.color(QPalette::WindowText));
+            }
+            
+            painter.drawText(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr);
 
-            // ASCII Area
-            unsigned char byteValue = byte;
-            // Use the custom map for display character
-            QString asciiChar = m_charMap[byteValue]; 
+            // d) ASCII Area Drawing
+            QString charStr = m_charMap[byte];
+            // Asegurarse de que el color del texto para ASCII siempre sea el normal si no está seleccionado.
+            if (!isSelected && !isCursorByte) {
+                 painter.setPen(pal.color(QPalette::WindowText));
+            }
+            painter.drawText(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, charStr);
             
-            int asciiPosX = m_asciiStartCol + byteOffset * m_charWidth;
-            QRect asciiRect(asciiPosX, currentY, m_charWidth, m_charHeight);
-            
-            // Draw ASCII text
-            painter.setPen(asciiColor);
-            painter.drawText(asciiRect, Qt::AlignCenter, asciiChar);
+            // Resetear el color de texto a WindowText para el resto de elementos si es necesario
+            painter.setPen(pal.color(QPalette::WindowText));
         }
-        
-        bytesProcessed += m_bytesPerLine;
-        currentY += m_charHeight;
     }
+    
+    // MODIFICACIÓN: Bloque eliminado para quitar el cursor de edición visual (la línea vertical)
+    /*
+    if (m_selectionStart == -1 || m_selectionStart == m_selectionEnd) {
+        // ... Lógica del cursor eliminada ...
+    }
+    */
 }
 
 // ----------------------------------------------------------------------
-// --- Keyboard Interaction (Editing and Navigation Logic) ---
+// --- Editing Logic Helpers ---
 // ----------------------------------------------------------------------
+
+/**
+ * @brief Handles printable character input when in AsciiMode, using the custom char map.
+ */
+void HexEditorArea::handleAsciiInput(const QString &text) {
+    if (text.isEmpty()) return;
+
+    QChar inputChar = text.at(0);
+    
+    // Buscar el valor de byte en m_charMap
+    int byteValue = -1;
+    for (int i = 0; i < 256; ++i) {
+        if (m_charMap[i].length() > 0 && m_charMap[i].at(0) == inputChar) {
+            byteValue = i;
+            break;
+        }
+    }
+
+    if (byteValue != -1) {
+        int byteIndex = m_cursorPos / 2;
+        
+        // Ensure we are not past the data end
+        if (byteIndex < m_data.size()) {
+            // Replace the byte with the value found in the map
+            m_data[byteIndex] = (char)byteValue;
+            
+            // Move the cursor to the next byte (2 nibbles)
+            setCursorPosition(m_cursorPos + 2); 
+            
+            // Notify listeners of the change
+            emit dataChanged();
+        }
+    }
+}
+
+/**
+ * @brief Handles Backspace/Delete operations.
+ */
+void HexEditorArea::handleDelete() {
+    // MODIFICACIÓN: Comportamiento unificado byte a byte para Backspace.
+    
+    // Solo manejamos Backspace en esta función (comportamiento de borrar hacia la izquierda)
+    if (m_cursorPos > 0) {
+        
+        // Backspace borra el byte anterior (pone 0x00) y mueve el cursor 2 nibbles hacia atrás.
+        setCursorPosition(m_cursorPos - 2);
+        int byteIndex = m_cursorPos / 2;
+        
+        if (byteIndex < m_data.size()) {
+            m_data[byteIndex] = 0x00;
+            emit dataChanged();
+        }
+    }
+}
+
 
 void HexEditorArea::keyPressEvent(QKeyEvent *event) {
-    // Check for the PASTE shortcut (Ctrl+V)
-    if (event->matches(QKeySequence::Paste)) {
-        QClipboard *clipboard = QApplication::clipboard();
-        QString textToPaste = clipboard->text();
-        
-        if (textToPaste.isEmpty()) return;
-
-        // Start processing from the current cursor position
-        int currentByteIndex = m_cursorPos / 2;
-        
-        int pastePos = m_cursorPos; 
-        
-        // --- 1. Handle HEX Mode Paste ---
-        if (m_editMode == HexMode) {
-            QString hexString;
-            for (QChar c : textToPaste) {
-                // Only keep valid hex digits (0-9, A-F)
-                if (c.isDigit() || (c.toUpper() >= 'A' && c.toUpper() <= 'F')) {
-                    hexString.append(c.toUpper());
-                }
-            }
-            
-            if (hexString.isEmpty()) return;
-            
-            for (QChar hexChar : hexString) {
-                if (pastePos / 2 >= m_data.size()) {
-                    // Stop if we run out of space (not inserting new bytes, only overwriting)
-                    break;
-                }
-                
-                int byteIndex = pastePos / 2;
-                int nibble = pastePos % 2;
-                
-                char byte = m_data.at(byteIndex);
-                // Convert hex char to its integer value (0-15)
-                int value = hexChar.toLatin1() >= 'A' ? hexChar.toLatin1() - 'A' + 10 : hexChar.digitValue();
-                
-                if (nibble == 0) { 
-                    // Set high nibble
-                    byte = (byte & 0x0F) | (value << 4);
-                    pastePos++; // Advance to low nibble
-                } else { 
-                    // Set low nibble
-                    byte = (byte & 0xF0) | value;
-                    pastePos += 2; // Advance to the start of the next byte (high nibble)
-                }
-                
-                m_data[byteIndex] = byte;
-            }
-            
-        } 
-        // --- 2. Handle ASCII Mode Paste (CORREGIDO y usando m_charMap) ---
-        else if (m_editMode == AsciiMode) {
-            
-            for (QChar charPressed : textToPaste) {
-                if (currentByteIndex >= m_data.size()) {
-                    break; // Stop if we run out of space (only overwriting)
-                }
-                
-                // CORRECCIÓN: Usar la conversión implícita de QChar a QString.
-                QString charStr = charPressed; 
-                int byteValueToWrite = -1;
-                
-                // Buscar el carácter pegado en el mapa de conversión
-                for (int i = 0; i < 256; ++i) {
-                    if (m_charMap[i] == charStr) { 
-                        byteValueToWrite = i;
-                        break;
-                    }
-                }
-
-                if (byteValueToWrite != -1) {
-                    // Si se encuentra una coincidencia, escribir el valor del byte correspondiente
-                    m_data[currentByteIndex] = (char)byteValueToWrite;
-                } else {
-                    // Si el carácter no está mapeado, se salta/ignora, manteniendo el byte actual
-                }
-
-                // Siempre avanzar a la siguiente posición de byte
-                currentByteIndex++;
-            }
-            // Actualizar la posición del cursor
-            pastePos = currentByteIndex * 2; 
-        }
-
-        // Finalize
-        emit dataChanged(); 
-        // Ensure cursor ends up on an even nibble boundary (start of a byte)
-        setCursorPosition(pastePos);
-        return; 
+    
+    // Clear selection on any keyboard press that isn't a modifier/selection
+    if (event->key() != Qt::Key_Shift && event->key() != Qt::Key_Control) {
+        clearSelection();
     }
     
-    int byteIndex = m_cursorPos / 2;
-    int nibble = m_cursorPos % 2; 
-
-    // 1. Navigation Handling (FIX: Movimiento byte por byte en ambos modos)
+    // --- 1. HANDLE NAVIGATION KEYS ---
     switch (event->key()) {
-    case Qt::Key_Left:
-        // Siempre mueve 2 nibbles (1 byte) a la izquierda.
-        setCursorPosition(m_cursorPos - 2); 
-        return;
-    case Qt::Key_Right:
-        // Siempre mueve 2 nibbles (1 byte) a la derecha.
-        setCursorPosition(m_cursorPos + 2); 
-        return;
-    case Qt::Key_Up:
-        setCursorPosition(m_cursorPos - m_bytesPerLine * 2);
-        return;
-    case Qt::Key_Down:
-        setCursorPosition(m_cursorPos + m_bytesPerLine * 2);
-        return;
-        
-    case Qt::Key_Backspace: {
-        if (m_cursorPos == 0) return;
-        
-        // En ambos modos, el retroceso debería borrar el byte anterior y moverse a él.
-        int targetPos = m_cursorPos - 2; 
-        int targetByteIndex = targetPos / 2;
-        
-        if (targetByteIndex >= 0) {
-             m_data[targetByteIndex] = 0x00; 
-             emit dataChanged();
-             setCursorPosition(targetPos); 
-        }
-        return;
-    }
-        
-    case Qt::Key_Delete: {
-        if (byteIndex >= m_data.size()) return;
-        // En ambos modos, Delete borra el byte actual.
-        m_data[byteIndex] = 0x00; 
-        emit dataChanged();
-        setCursorPosition(byteIndex * 2); 
-        return;
-    }
-        
-    default:
-        break; 
+        case Qt::Key_Left:
+            // MODIFICACIÓN: Mover siempre 2 nibbles (1 byte)
+            setCursorPosition(m_cursorPos - 2);
+            return;
+        case Qt::Key_Right:
+             // MODIFICACIÓN: Mover siempre 2 nibbles (1 byte)
+            setCursorPosition(m_cursorPos + 2);
+            return;
+        case Qt::Key_Up:
+            setCursorPosition(m_cursorPos - m_bytesPerLine * 2);
+            return;
+        case Qt::Key_Down:
+            setCursorPosition(m_cursorPos + m_bytesPerLine * 2);
+            return;
+        case Qt::Key_Home:
+            setCursorPosition(0);
+            return;
+        case Qt::Key_End:
+            setCursorPosition(m_data.size() * 2);
+            return;
+        case Qt::Key_PageUp:
+            setCursorPosition(m_cursorPos - (viewport()->height() / m_charHeight) * m_bytesPerLine * 2);
+            return;
+        case Qt::Key_PageDown:
+            setCursorPosition(m_cursorPos + (viewport()->height() / m_charHeight) * m_bytesPerLine * 2);
+            return;
+        case Qt::Key_Backspace:
+            handleDelete(); // >> Llama a la función declarada
+            return;
+        case Qt::Key_Delete:
+             // Simple implementation: write 0x00 at the current position
+            if (m_cursorPos / 2 < m_data.size()) {
+                 m_data[m_cursorPos / 2] = 0x00;
+                 setCursorPosition(m_cursorPos + 2); // Move to next byte
+                 emit dataChanged();
+            }
+            return;
+        default:
+            break;
     }
     
-    // 2. Data Input Handling (Text Editing)
+    // --- 2. HANDLE EDITING INPUT ---
+    
+    // Handle printable text input
     QString text = event->text();
-    byteIndex = m_cursorPos / 2;
-    nibble = m_cursorPos % 2; // Volvemos a calcularlo ya que el cursor puede haberse movido internamente
-
-    if (text.size() == 1 && byteIndex < m_data.size()) {
-        QChar charPressed = text.at(0); 
-        
-        QChar hexChar = charPressed.toUpper();
-        bool isHexDigit = (hexChar.isDigit() || (hexChar >= 'A' && hexChar <= 'F'));
-        
-        if (m_editMode == HexMode) {
-            if (isHexDigit) {
-                char byte = m_data.at(byteIndex);
-                int value = hexChar.toLatin1() >= 'A' ? hexChar.toLatin1() - 'A' + 10 : charPressed.digitValue();
-                
-                if (nibble == 0) { 
-                    // High nibble
-                    byte = (byte & 0x0F) | (value << 4);
-                    m_data[byteIndex] = byte;
-                    emit dataChanged(); 
-                    setCursorPosition(m_cursorPos + 1); // Move to the low nibble for next input
-                    return; 
-                } else { 
-                    // Low nibble
-                    byte = (byte & 0xF0) | value;
-                    m_data[byteIndex] = byte;
-                    emit dataChanged();
-                    // FIX: Después de editar el nibble bajo, saltar al inicio del siguiente byte.
-                    setCursorPosition(m_cursorPos + 1); 
-                    return;
-                }
-            }
-        }
-        
-        // --- Handle ASCII Mode Typing (CORREGIDO y usando m_charMap) ---
+    if (!text.isEmpty()) {
         if (m_editMode == AsciiMode) {
-            // CORRECCIÓN: Usar la conversión implícita de QChar a QString.
-            QString charStr = charPressed; 
-
-            for (int i = 0; i < 256; ++i) {
-                // Si el carácter está en el mapa, escribimos el byte (i) correspondiente
-                if (m_charMap[i] == charStr) { 
-                    m_data[byteIndex] = (char)i;
+            handleAsciiInput(text); // >> Llama a la función declarada
+            return;
+        } else if (m_editMode == HexMode) {
+            // >> Edición HEX (byte a byte)
+            QChar inputChar = text.at(0);
+            int hexValue = inputChar.toLower().digitValue(); // -1 si no es hex.
+            
+            if (hexValue != -1) { 
+                int byteIndex = m_cursorPos / 2;
+                
+                if (byteIndex < m_data.size()) {
+                    unsigned char byte = (unsigned char)m_data[byteIndex];
+                    
+                    // MODIFICACIÓN: Al presionar un dígito, se asume que es la parte alta (high nibble)
+                    // y se sobrescribe el byte con este nibble y el nibble bajo actual.
+                    byte = (byte & 0x0F) | (hexValue << 4);
+                    
+                    m_data[byteIndex] = (char)byte;
+                    
                     emit dataChanged();
-                    setCursorPosition(m_cursorPos + 2); // Mover al siguiente byte
-                    return;
+                    setCursorPosition(m_cursorPos + 2); // MODIFICACIÓN: Mover 2 nibbles (1 byte)
                 }
+                return;
             }
-            // Si el carácter no se encuentra en el mapa, ignorar la pulsación de tecla.
-            return;
         }
     }
 
+    // Pass unhandled events up (e.g., Ctrl+C, Ctrl+V, etc.)
     QAbstractScrollArea::keyPressEvent(event);
-}
-
-void HexEditorArea::setCursorPosition(int newPos) {
-    newPos = std::min(newPos, m_data.size() * 2);
-    newPos = std::max(newPos, 0);
-    
-    // FIX: Si estamos en HexMode o AsciiMode, forzar el cursor a un nibble par (inicio de byte),
-    // excepto si estamos activamente escribiendo el nibble bajo en HexMode (newPos es impar).
-    if (m_editMode == HexMode || m_editMode == AsciiMode) {
-        // Solo forzamos si el nuevo índice es par (movimiento) O si ya hemos pasado
-        // un nibble bajo y queremos ir al siguiente byte (m_cursorPos impar + 1)
-        if (newPos % 2 != 0) { 
-            // Si el cursor cae en nibble impar, lo dejamos allí SOLO si está en HexMode 
-            // para la edición del segundo nibble.
-            // Si el modo es HexMode y la posición es impar, lo dejamos para permitir la edición.
-            // Si no estamos en HexMode o si el cursor ya pasó el límite, lo forzamos.
-            if (m_editMode != HexMode || newPos % 2 == 0) {
-                 newPos = newPos - (newPos % 2); // Force to start of byte
-            }
-        }
-    }
-
-    if (newPos == m_cursorPos) return;
-    
-    m_cursorPos = newPos;
-    
-    int line = m_cursorPos / (2 * m_bytesPerLine);
-    int requiredY = line * m_charHeight;
-    int scrollY = verticalScrollBar()->value();
-    
-    if (requiredY < scrollY) {
-        verticalScrollBar()->setValue(requiredY);
-    } else if (requiredY + m_charHeight > scrollY + viewport()->height()) {
-        verticalScrollBar()->setValue(requiredY + m_charHeight - viewport()->height());
-    }
-    
-    viewport()->update();
-}
-
-// ----------------------------------------------------------------------
-// --- Mouse Interaction ---
-// ----------------------------------------------------------------------
-
-void HexEditorArea::mousePressEvent(QMouseEvent *event) {
-    int scrollY = verticalScrollBar()->value();
-    int line = (event->pos().y() + scrollY) / m_charHeight;
-    int offset = line * m_bytesPerLine;
-    
-    if (offset >= m_data.size()) {
-        setCursorPosition(m_data.size() * 2);
-        m_editMode = HexMode; 
-        return;
-    }
-
-    int colX = event->pos().x();
-    int byteInLine = -1;
-    
-    // Click Logic in HEX Area (FIX: Click siempre selecciona el inicio del byte)
-    const int HEX_MAX_X = m_asciiStartCol - 3 * m_charWidth;
-    if (colX >= m_hexStartCol && colX < HEX_MAX_X) {
-        m_editMode = HexMode;
-        int relX = colX - m_hexStartCol;
-        int charIndex = relX / m_charWidth; 
-        byteInLine = charIndex / 3; 
-        
-        // Forzar cursor al inicio del byte (nibble par)
-        int newPos = (offset + byteInLine) * 2;
-        setCursorPosition(newPos);
-        return;
-    }
-    
-    // Click Logic in ASCII Area
-    else if (colX >= m_asciiStartCol) {
-        m_editMode = AsciiMode;
-        int relX = colX - m_asciiStartCol;
-        byteInLine = relX / m_charWidth;
-        
-        int index = offset + byteInLine;
-        if (index < m_data.size()) {
-            int newPos = index * 2;
-            setCursorPosition(newPos);
-            return;
-        }
-    }
-    
-    m_editMode = HexMode; 
-    setCursorPosition(offset * 2);
-}
-
-void HexEditorArea::resizeEvent(QResizeEvent *event) {
-    QAbstractScrollArea::resizeEvent(event);
-    updateViewMetrics();
 }
 
 
@@ -500,22 +416,119 @@ int HexEditorArea::byteIndexAt(const QPoint &point) const {
     int colX = point.x();
     int byteInLine = -1;
     
+    // The space between hex and ASCII starts 3 slots after the last hex slot
     const int HEX_MAX_X = m_asciiStartCol - 3 * m_charWidth;
+    
+    // Check if click is in the HEX area
     if (colX >= m_hexStartCol && colX < HEX_MAX_X) {
         int relX = colX - m_hexStartCol;
         int charIndex = relX / m_charWidth;
         byteInLine = charIndex / 3; 
     }
     
-    else if (colX >= m_asciiStartCol) {
+    // Check if click is in the ASCII area
+    else if (colX >= m_asciiStartCol && colX < m_asciiStartCol + m_bytesPerLine * m_charWidth) {
         int relX = colX - m_asciiStartCol;
         byteInLine = relX / m_charWidth;
     }
     
-    if (byteInLine >= 0 && byteInLine < m_bytesPerLine) {
-        int index = offset + byteInLine;
-        return index < m_data.size() ? index : -1;
-    }
+    if (byteInLine == -1) return -1;
+    
+    int byteIndex = offset + byteInLine;
+    return (byteIndex < m_data.size()) ? byteIndex : -1;
+}
 
-    return -1;
+
+void HexEditorArea::mousePressEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        int byteIndex = byteIndexAt(event->pos());
+        if (byteIndex != -1) {
+            
+            int colX = event->pos().x();
+            
+            // Determine the new Edit Mode based on where the click occurred
+            if (colX >= m_asciiStartCol && colX < m_asciiStartCol + m_bytesPerLine * m_charWidth) {
+                m_editMode = AsciiMode;
+                // In AsciiMode, the cursor is always at the start of the byte
+                setCursorPosition(byteIndex * 2);
+            } else {
+                m_editMode = HexMode;
+                
+                // MODIFICACIÓN: Siempre posicionar al inicio del byte (posición par de nibble)
+                setCursorPosition(byteIndex * 2);
+                
+                /* Lógica de cálculo de nibble eliminada, ya que siempre es byte-a-byte
+                // Calculate nibble position in HexMode
+                int relX = colX - m_hexStartCol;
+                int charIndex = relX / m_charWidth;
+                int byteInLine = charIndex / 3;
+                
+                int nibblePos = 0; // 0 for high nibble, 1 for low nibble
+
+                if (byteInLine == byteIndex % m_bytesPerLine) {
+                     int charInByte = charIndex % 3;
+                     if (charInByte == 1) { // Second hex character (low nibble)
+                        nibblePos = 1;
+                     } 
+                     // charInByte == 0 is high nibble (nibblePos = 0)
+                     // charInByte == 2 is the space (treat as clicking on the second hex character)
+                     else if (charInByte == 2) {
+                         nibblePos = 1;
+                     }
+                     
+                     setCursorPosition(byteIndex * 2 + nibblePos);
+                } else {
+                     setCursorPosition(byteIndex * 2);
+                }
+                */
+            }
+
+
+            // Start drag selection
+            m_selectionStart = m_cursorPos;
+            m_selectionEnd = m_cursorPos;
+        }
+    }
+    QAbstractScrollArea::mousePressEvent(event);
+}
+
+void HexEditorArea::mouseMoveEvent(QMouseEvent *event) {
+    if (event->buttons() & Qt::LeftButton) {
+        int byteIndex = byteIndexAt(event->pos());
+        if (byteIndex != -1) {
+            int newCursorPos;
+            
+            // For selection dragging, track byte boundaries (2 nibbles)
+            newCursorPos = byteIndex * 2;
+            
+            // Update the selection end to include the entire byte
+            int currentSelectionEnd;
+            if (newCursorPos < m_selectionStart) {
+                // Dragging backwards
+                currentSelectionEnd = m_selectionStart;
+                // Since newCursorPos is the start of the current byte, we use newCursorPos for the selection start
+                setSelection(newCursorPos, currentSelectionEnd); 
+            } else {
+                // Dragging forwards
+                currentSelectionEnd = newCursorPos + 2; // +2 to include the current byte
+                setSelection(m_selectionStart, currentSelectionEnd); 
+            }
+        }
+    }
+    QAbstractScrollArea::mouseMoveEvent(event);
+}
+
+void HexEditorArea::mouseReleaseEvent(QMouseEvent *event) {
+    if (event->button() == Qt::LeftButton) {
+        // If selection is zero length, clear it
+        if (m_selectionStart == m_selectionEnd) {
+             clearSelection();
+        }
+    }
+    QAbstractScrollArea::mouseReleaseEvent(event);
+}
+
+void HexEditorArea::resizeEvent(QResizeEvent *event) {
+    QAbstractScrollArea::resizeEvent(event);
+    updateViewMetrics();
 }
