@@ -65,16 +65,16 @@ private:
     int m_selectionAnchor = -1; 
     int m_selectionStart = -1;
     int m_selectionEnd = -1;   
-    
+
+    int m_currentNibbleIndex = 0;
 
     void calculateMetrics(); 
     void setCursorPosition(int newPos); 
     void clearSelection();
 
     void handleAsciiInput(const QString &text); 
+    void handleHexInput(const QString &text);
     void handleDelete();
-    int nibbleIndexAt(const QPoint &point, bool *isHexArea) const; 
-    void handleHexInput(const QString &text); 
 };
 
 #endif

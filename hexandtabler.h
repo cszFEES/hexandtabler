@@ -9,6 +9,7 @@
 #include <QTableWidgetItem> 
 #include <QCloseEvent>
 #include <QModelIndexList> 
+#include <QVector> 
 
 // Forward declarations
 class HexEditorArea;
@@ -54,35 +55,31 @@ private slots:
     
     // --- FIND/REPLACE SLOTS ---
     void on_actionFind_triggered();
-    void on_actionReplace_triggered();
+    void on_actionReplace_triggered(); 
+    void on_actionCopy_triggered();       // <-- AÑADIDO
+    void on_actionPaste_triggered();      // <-- AÑADIDO
+    
+    
+    // --- TABLE SLOTS (AÑADIDOS) ---
+    void on_actionToggleTable_triggered();        // <-- AÑADIDO
+    void on_actionLoadTable_triggered();          // <-- AÑADIDO
+    void on_actionSaveTable_triggered();          // <-- AÑADIDO
+    void on_actionSaveTableAs_triggered();        // <-- AÑADIDO
+    void on_actionInsertLatinUpper_triggered();   // <-- AÑADIDO
+    void on_actionInsertLatinLower_triggered();   // <-- AÑADIDO
+    void on_actionInsertHiragana_triggered();     // <-- AÑADIDO
+    void on_actionInsertKatakana_triggered();     // <-- AÑADIDO
+    void on_actionInsertCyrillic_triggered();     // <-- AÑADIDO
+    
+    // --- DATA HANDLING SLOTS (AÑADIDOS) ---
+    void handleDataEdited();                     // <-- AÑADIDO
+    void handleTableItemChanged(QTableWidgetItem *item); // <-- AÑADIDO
+    
 
-    // copy paste
-    void on_actionCopy_triggered();                               
-    void on_actionPaste_triggered();
-    
-    // --- TABLE SLOTS ---
-    void on_actionToggleTable_triggered(); 
-    void on_actionLoadTable_triggered();
-    void on_actionSaveTable_triggered();
-    void on_actionSaveTableAs_triggered();
-    
-    void on_actionInsertLatinUpper_triggered();
-    void on_actionInsertLatinLower_triggered();
-    void on_actionInsertHiragana_triggered();
-    void on_actionInsertKatakana_triggered();
-    void on_actionInsertCyrillic_triggered();
-    
-    // --- EVENT HANDLERS ---
-    void handleDataEdited();
-    void handleTableItemChanged(QTableWidgetItem *item);
-    
-    // Recent Files Slots
-    void openRecentFile();
-    
 private:
     Ui::hexandtabler *ui;
     HexEditorArea *m_hexEditorArea = nullptr;
-    QTableWidget *m_conversionTable = nullptr;
+    QTableWidget *m_tableWidget = nullptr;       // <-- CORRECTO: Usado en CPP como m_tableWidget
     QDockWidget *m_tableDock = nullptr;
     FindReplaceDialog *m_findReplaceDialog = nullptr; 
     
@@ -103,6 +100,9 @@ private:
     void replaceOne();
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
     
+    void findNextRelative(const QString &searchText, bool wrap, bool backwards);
+    QVector<qint8> calculateRelativeOffsets(const QString &input) const; 
+    
     // Recent Files
     enum { MaxRecentFiles = 5 };
     QAction *recentFileActions[MaxRecentFiles];
@@ -111,7 +111,6 @@ private:
     void setupConversionTable();
     
     void loadFile(const QString &filePath);
-    // Declaración agregada
     void setCurrentFile(const QString &filePath); 
     bool saveDataToFile(const QString &filePath); 
     bool saveFileAs();                            
@@ -131,7 +130,10 @@ private:
     void createRecentFileActions();
     void loadRecentFiles();
     void updateRecentFileActions();
-    void prependToRecentFiles(const QString &filePath);
+    void prependToRecentFiles(const QString &filePath); // <-- AÑADIDO
+    
+    void openRecentFile(); 
+
 };
 
 #endif // HEXANDTABLER_H

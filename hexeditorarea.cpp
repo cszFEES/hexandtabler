@@ -16,7 +16,8 @@
 
 HexEditorArea::HexEditorArea(QWidget *parent)
     : QAbstractScrollArea(parent),
-      m_bytesPerLine(16)
+      m_bytesPerLine(16),
+      m_currentNibbleIndex(0)
 {
     QFont font("Monospace", 12); 
     font.setStyleHint(QFont::Monospace);
@@ -46,10 +47,6 @@ HexEditorArea::HexEditorArea(QWidget *parent)
     setMouseTracking(true); 
     setFocusPolicy(Qt::StrongFocus);
 }
-
-// -----------------------------------------------------------------------------
-// Configuracion y Métricas
-// -----------------------------------------------------------------------------
 
 void HexEditorArea::setCharMapping(const QString (&mapping)[256]) {
     for (int i = 0; i < 256; ++i) {
@@ -96,10 +93,6 @@ void HexEditorArea::setHexData(const QByteArray &data) {
 QByteArray HexEditorArea::hexData() const {
     return m_data;
 }
-
-// -----------------------------------------------------------------------------
-// Cursor y Selección
-// -----------------------------------------------------------------------------
 
 void HexEditorArea::goToOffset(quint64 offset) {
     if (offset >= (quint64)m_data.size()) {
@@ -154,6 +147,7 @@ void HexEditorArea::setCursorPosition(int newPos) {
     if (newPos == m_cursorPos) return;
     
     m_cursorPos = newPos; 
+    m_currentNibbleIndex = 0; 
     
     int offset = m_cursorPos / 2;
     int line = offset / m_bytesPerLine;
@@ -170,10 +164,6 @@ void HexEditorArea::setCursorPosition(int newPos) {
     viewport()->update();
 }
 
-// -----------------------------------------------------------------------------
-// Portapapeles
-// -----------------------------------------------------------------------------
-
 void HexEditorArea::copySelection()
 {
     if (m_selectionStart == -1 || m_selectionStart == m_selectionEnd)
@@ -188,10 +178,8 @@ void HexEditorArea::copySelection()
     QClipboard *clipboard = QApplication::clipboard();
     
     QMimeData *mimeData = new QMimeData();
-    // 1. Datos Binarios
     mimeData->setData("application/octet-stream", selectedData); 
     
-    // 2. Representación Hexadecimal en Texto (CORREGIDO a Mayúsculas)
     QString hexText;
     for (int i = 0; i < selectedData.size(); ++i) {
         hexText += QString("%1 ").arg((unsigned char)selectedData.at(i), 2, 16, QChar('0')).toUpper();
@@ -215,7 +203,6 @@ void HexEditorArea::pasteFromClipboard() {
         QByteArray tempCharMappedData;
         bool mappedSuccessfully = false;
         
-        // Intento 1: Mapeo de caracteres (modo ASCII)
         for (int i = 0; i < text.length(); ++i) {
             QChar ch = text.at(i);
             bool found = false;
@@ -232,18 +219,15 @@ void HexEditorArea::pasteFromClipboard() {
             }
         }
         
-        // Intento 2: Cadena Hexadecimal (si el mapeo fue inútil)
         if (!mappedSuccessfully || tempCharMappedData.toStdString() == std::string(tempCharMappedData.size(), '\0')) {
             QString cleanedText = text.simplified();
             cleanedText.remove(' ');
             cleanedText.remove('\n');
             cleanedText.remove('\r');
-            // Mantiene .toLower() para permitir pegar hex en minúsculas
             QByteArray hexParsedData = QByteArray::fromHex(cleanedText.toLower().toUtf8()); 
             if (!hexParsedData.isEmpty()) {
                 dataToPaste = hexParsedData;
             } else {
-                // Intento 3: Texto plano como bytes (fall-back)
                 dataToPaste = text.toUtf8();
             }
         } else {
@@ -253,7 +237,6 @@ void HexEditorArea::pasteFromClipboard() {
 
     if (dataToPaste.isEmpty()) return;
 
-    // Lógica de PEGADO
     if (m_selectionStart != -1 && m_selectionStart != m_selectionEnd) {
         int startByte = m_selectionStart / 2;
         int endByte = m_selectionEnd / 2;
@@ -280,10 +263,6 @@ void HexEditorArea::pasteFromClipboard() {
     emit dataChanged();
 }
 
-// -----------------------------------------------------------------------------
-// Dibujado (Paint Event)
-// -----------------------------------------------------------------------------
-
 void HexEditorArea::paintEvent(QPaintEvent *event) {
     QPainter painter(viewport());
     painter.setFont(font());
@@ -303,7 +282,7 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
 
         int currentY = line * m_charHeight - scrollY;
         
-        // 1. DIBUJAR OFFSET
+        // 1. DRAW OFFSET
         QString offsetStr = QString("%1").arg(startByteIndex, 8, 16, QChar('0')).toUpper();
         painter.setPen(pal.color(QPalette::WindowText));
         painter.drawText(0, currentY, m_charWidth * 10, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, offsetStr);
@@ -323,16 +302,16 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
             QColor bgColor = pal.color(QPalette::Base);
             if (isSelected) {
                 bgColor = pal.color(QPalette::Highlight);
-            } else if (isCursorByte) {
+            } else if (isCursorByte) { // Resaltar el byte completo si el cursor está en él
                 bgColor = pal.color(QPalette::Midlight);
             }
 
-            // 2. RELLENAR FONDO
+            // Fill hex area (3 chars: high nibble, low nibble, space)
             painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, bgColor);
+            // Fill ascii area (1 char)
             painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, bgColor);
             
-            // 3. DIBUJAR HEX (CORREGIDO a Mayúsculas)
-            QString hexStr = QString("%1 ").arg(byte, 2, 16, QChar('0')).toUpper();
+            QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
             
             if (isSelected || isCursorByte) {
                  painter.setPen(pal.color(QPalette::HighlightedText));
@@ -340,9 +319,19 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
                  painter.setPen(pal.color(QPalette::WindowText));
             }
             
-            painter.drawText(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr);
-
-            // 4. DIBUJAR ASCII
+            // Draw high nibble (slot 0)
+            int hexStart = m_hexStartCol + i * (3 * m_charWidth);
+            painter.drawText(hexStart, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(0));
+            
+            // Draw low nibble (slot 1)
+            painter.drawText(hexStart + m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(1));
+            
+            // Draw space (slot 2)
+            painter.drawText(hexStart + 2 * m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, " ");
+            
+            // NO DRAW NIBBLE CURSOR
+            
+            // Draw ASCII
             QString charStr = m_charMap[byte];
             if (!isSelected && !isCursorByte) {
                  painter.setPen(pal.color(QPalette::WindowText));
@@ -353,10 +342,6 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
         }
     }
 }
-
-// -----------------------------------------------------------------------------
-// Manejo de Entrada y Edición
-// -----------------------------------------------------------------------------
 
 void HexEditorArea::handleAsciiInput(const QString &text) {
     if (text.isEmpty()) return;
@@ -382,6 +367,49 @@ void HexEditorArea::handleAsciiInput(const QString &text) {
     }
 }
 
+void HexEditorArea::handleHexInput(const QString &text) {
+    if (text.isEmpty()) return;
+
+    QChar inputChar = text.at(0);
+    int hexValue = -1;
+
+    if (inputChar.isDigit()) {
+        hexValue = inputChar.digitValue(); // 0-9
+    } else {
+        // CORRECCIÓN: Manejo manual de A-F para evitar errores de digitValue() en letras.
+        QChar lowerChar = inputChar.toLower();
+        if (lowerChar >= 'a' && lowerChar <= 'f') {
+            hexValue = lowerChar.unicode() - QChar('a').unicode() + 10;
+        }
+    }
+
+    if (hexValue < 0 || hexValue > 15) {
+        return;
+    }
+
+    int byteIndex = m_cursorPos / 2;
+
+    if (byteIndex < m_data.size()) {
+        unsigned char byte = (unsigned char)m_data[byteIndex];
+
+        if (m_currentNibbleIndex == 0) {
+            byte = (byte & 0x0F) | (hexValue << 4);
+            m_data[byteIndex] = (char)byte;
+            
+            m_currentNibbleIndex = 1;
+            viewport()->update();
+        } else {
+            byte = (byte & 0xF0) | hexValue;
+            m_data[byteIndex] = (char)byte;
+            
+            setCursorPosition(m_cursorPos + 2);
+            m_currentNibbleIndex = 0; 
+        }
+        
+        emit dataChanged();
+    }
+}
+
 void HexEditorArea::handleDelete() {
     if (m_cursorPos > 0) {
         setCursorPosition(m_cursorPos - 2); 
@@ -399,15 +427,27 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
     int newCursorPos = m_cursorPos;
     bool moved = false;
     
-    // --- MANEJO DEL ANCLA DE SELECCIÓN ---
     if (!shiftIsHeld && event->key() != Qt::Key_Control) {
         clearSelection(); 
+    }
+    
+    // CORRECCIÓN ROBUSTA DE TAB: Interceptar QKey_Tab con el código de tecla.
+    // Esto previene que el QAbstractScrollArea y QMainWindow muevan el foco.
+    if (event->key() == Qt::Key_Tab) {
+        if (m_editMode == HexMode) {
+            m_editMode = AsciiMode;
+        } else {
+            m_editMode = HexMode;
+        }
+        m_currentNibbleIndex = 0; 
+        viewport()->update();
+        event->accept(); 
+        return;
     }
     
     if (shiftIsHeld && m_selectionAnchor == -1) {
         m_selectionAnchor = m_cursorPos; 
     }
-    // ------------------------------------
     
     switch (event->key()) {
         case Qt::Key_Left:
@@ -487,7 +527,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
         return;
     }
     
-    // --- MANEJO DE COMANDOS ---
+    // --- commands ---
     if (event->matches(QKeySequence::Copy)) {
         copySelection();
         return;
@@ -498,38 +538,20 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
         return;
     }
     
-    // --- MANEJO DE ENTRADA DE TEXTO (ASCII/HEX) ---
+    // --- text entry (ASCII/HEX) ---
     QString text = event->text();
     if (!text.isEmpty()) {
         if (m_editMode == AsciiMode) {
             handleAsciiInput(text); 
             return;
         } else if (m_editMode == HexMode) {
-            QChar inputChar = text.at(0);
-            int hexValue = inputChar.toLower().digitValue(); 
-            
-            if (hexValue != -1) { 
-                int byteIndex = m_cursorPos / 2;
-                
-                if (byteIndex < m_data.size()) {
-                    unsigned char byte = (unsigned char)m_data[byteIndex];
-                    
-                    byte = (byte & 0x0F) | (hexValue << 4);
-                    m_data[byteIndex] = (char)byte;
-                    emit dataChanged();
-                    setCursorPosition(m_cursorPos + 2);
-                }
-                return;
-            }
+            handleHexInput(text);
+            return;
         }
     }
 
     QAbstractScrollArea::keyPressEvent(event);
 }
-
-// -----------------------------------------------------------------------------
-// Eventos del Ratón
-// -----------------------------------------------------------------------------
 
 int HexEditorArea::byteIndexAt(const QPoint &point) const {
     int scrollY = verticalScrollBar()->value();
@@ -544,13 +566,11 @@ int HexEditorArea::byteIndexAt(const QPoint &point) const {
     
     const int HEX_MAX_X = m_asciiStartCol - (3 * m_charWidth); 
     
-    // Zona Hexadecimal
     if (colX >= m_hexStartCol && colX < HEX_MAX_X) {
         int relX = colX - m_hexStartCol;
         int charIndex = relX / m_charWidth;
         byteInLine = charIndex / 3;
     }
-    // Zona ASCII
     else if (colX >= m_asciiStartCol && colX < m_asciiStartCol + m_bytesPerLine * m_charWidth) {
         int relX = colX - m_asciiStartCol;
         byteInLine = relX / m_charWidth;
@@ -569,6 +589,7 @@ void HexEditorArea::mousePressEvent(QMouseEvent *event) {
             int colX = event->pos().x();
 
             m_editMode = (colX >= m_asciiStartCol) ? AsciiMode : HexMode;
+            m_currentNibbleIndex = 0;
 
             m_selectionAnchor = byteIndex * 2;  
             setCursorPosition(m_selectionAnchor);
