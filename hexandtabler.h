@@ -55,6 +55,10 @@ private slots:
     // --- FIND/REPLACE SLOTS ---
     void on_actionFind_triggered();
     void on_actionReplace_triggered();
+
+    // copy paste
+    void on_actionCopy_triggered();                               
+    void on_actionPaste_triggered();
     
     // --- TABLE SLOTS ---
     void on_actionToggleTable_triggered(); 

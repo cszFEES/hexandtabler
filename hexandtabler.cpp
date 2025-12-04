@@ -754,6 +754,24 @@ void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replac
     m_hexEditorArea->setSelection(-1, -1);
 }
 
+// --- PASTE/COPY SLOTS --- // 
+// --------------------------------------------------------------------------------
+
+void hexandtabler::on_actionCopy_triggered()
+{
+    if (m_hexEditorArea) {
+        m_hexEditorArea->copySelection();
+    }
+}
+
+void hexandtabler::on_actionPaste_triggered()
+{
+    if (m_hexEditorArea) {
+        m_hexEditorArea->pasteFromClipboard();
+        // Pasting changes data, which calls handleDataEdited via dataChanged signal.
+    }
+}
+
 // --------------------------------------------------------------------------------
 // --- TABLE LOGIC ---
 // --------------------------------------------------------------------------------

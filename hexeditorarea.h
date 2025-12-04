@@ -30,6 +30,10 @@ public:
     void setSelection(int startPos, int endPos);        
     int m_selectionEnd = -1;                            // Public member to access selection end (in nibbles)
     
+    // --- PASTE/COPY OPERATIONS ---                       
+    void copySelection();                                  
+    void pasteFromClipboard();
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
@@ -56,6 +60,7 @@ private:
     int m_asciiStartCol = 0; 
     int m_lineLength = 0; 
     
+    int m_selectionAnchor = -1; 
     int m_selectionStart = -1; // Nibble index of selection start
     // m_selectionEnd is public
 

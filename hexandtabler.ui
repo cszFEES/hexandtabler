@@ -22,8 +22,7 @@
         <family>Monospace</family>
         <pointsize>10</pointsize>
        </font>
- 
-     </property>
+      </property>
       <property name="lineWrapMode">
        <enum>QTextEdit::NoWrap</enum>
       </property>
@@ -44,8 +43,7 @@
     <property name="title">
      <string>File</string>
     </property>
-   
- <addaction name="actionOpen"/>
+    <addaction name="actionOpen"/>
     <addaction name="actionSave"/>
     <addaction name="actionSaveAs"/>
     <addaction name="separator"/>
@@ -58,6 +56,9 @@
     <addaction name="actionUndo"/>
     <addaction name="actionRedo"/>
     <addaction name="separator"/>
+    <addaction name="actionCopy"/>
+    <addaction name="actionPaste"/>
+    <addaction name="separator"/>
     <addaction name="actionFind"/>
     <addaction name="actionReplace"/>
     <addaction name="separator"/>
@@ -66,8 +67,7 @@
    <widget class="QMenu" name="menuOptions">
     <property name="title">
      <string>Options</string>
-   
- </property>
+    </property>
     <addaction name="separator"/>
     <addaction name="actionDarkMode"/>
     <addaction name="separator"/>
@@ -78,21 +78,23 @@
     <property name="title">
      <string>Table</string>
     </property>
-    <addaction name="actionToggleTable"/> <addaction name="separator"/> <addaction name="actionLoadTable"/>
+    <addaction name="actionToggleTable"/> 
+    <addaction name="separator"/> 
+    <addaction name="actionLoadTable"/>
     <addaction name="actionSaveTable"/>
     <addaction name="actionSaveTableAs"/>
     <addaction name="separator"/>
     <addaction name="menuInsertSeries"/>
     <widget class="QMenu" name="menuInsertSeries">
      <property name="title">
-      <string>Insert a series in 
-the table</string>
+      <string>Insert a series in the table</string>
      </property>
      <addaction name="actionInsertLatinUpper"/>
      <addaction name="actionInsertLatinLower"/>
      <addaction name="actionInsertHiragana"/>
      <addaction name="actionInsertKatakana"/>
-     <addaction name="actionInsertCyrillic"/> </widget>
+     <addaction name="actionInsertCyrillic"/> 
+    </widget>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -108,8 +110,7 @@ the table</string>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
   <action name="actionOpen">
-   <property 
-name="text">
+   <property name="text">
     <string>Open...</string>
    </property>
    <property name="shortcut">
@@ -138,8 +139,7 @@ name="text">
    </property>
    <property name="shortcut">
     <string>Ctrl+Q</string>
-   
-</property>
+   </property>
   </action>
   <action name="actionUndo">
    <property name="text">
@@ -157,6 +157,22 @@ name="text">
     <string>Ctrl+Y</string>
    </property>
   </action>
+  <action name="actionCopy">
+   <property name="text">
+    <string>Copy</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+C</string>
+   </property>
+  </action>
+  <action name="actionPaste">
+   <property name="text">
+    <string>Paste</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+V</string>
+   </property>
+  </action>
   <action name="actionFind">
    <property name="text">
     <string>Find...</string>
@@ -169,8 +185,7 @@ name="text">
    <property name="text">
     <string>Replace...</string>
    </property>
-   
-<property name="shortcut">
+   <property name="shortcut">
     <string>Ctrl+H</string>
    </property>
   </action>
@@ -190,7 +205,8 @@ name="text">
     <bool>true</bool>
    </property>
    <property name="text">
-    <string>Show Conversion Table</string> </property>
+    <string>Show Conversion Table</string>
+   </property>
   </action>
   <action name="actionAbout">
    <property name="text">
@@ -199,8 +215,7 @@ name="text">
   </action>
   <action name="actionZoomIn">
    <property name="text">
- 
-   <string>Zoom In</string>
+    <string>Zoom In</string>
    </property>
    <property name="shortcut">
     <string>Ctrl++</string>
@@ -228,8 +243,7 @@ name="text">
    </property>
   </action>
   <action name="actionSaveTableAs">
-   
-<property name="text">
+   <property name="text">
     <string>Save Table As...</string>
    </property>
   </action>
@@ -258,8 +272,7 @@ name="text">
     <string>Katakana (ア-)</string>
    </property>
   </action>
- 
- <action name="actionInsertCyrillic">
+  <action name="actionInsertCyrillic">
    <property name="text">
     <string>Cyrillic (А-Я)</string>
    </property>
