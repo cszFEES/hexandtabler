@@ -18,21 +18,23 @@ public:
     void setHexData(const QByteArray &data);
     QByteArray hexData() const;
     
-    // Function to set the character map
     void setCharMapping(const QString (&mapping)[256]); 
     void goToOffset(quint64 offset); 
     
     int byteIndexAt(const QPoint &point) const;
     void updateViewMetrics();
     
-    // --- MEMBERS ADDED FOR FIND/REPLACE AND SELECTION ---
-    int cursorPosition() const { return m_cursorPos; } // Returns position in nibbles
+    int cursorPosition() const { return m_cursorPos; }
     void setSelection(int startPos, int endPos);        
-    int m_selectionEnd = -1;                            // Public member to access selection end (in nibbles)
     
-    // --- PASTE/COPY OPERATIONS ---                       
+    int selectionStart() const { return m_selectionStart; } 
+    int selectionEnd() const { return m_selectionEnd; } 
+    
     void copySelection();                                  
     void pasteFromClipboard();
+
+signals:
+    void dataChanged();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -49,7 +51,7 @@ private:
     };
     
     QByteArray m_data;
-    int m_cursorPos = 0; // Position in nibbles (0-based)
+    int m_cursorPos = 0;
     EditMode m_editMode = HexMode; 
     QString m_charMap[256]; 
     
@@ -61,21 +63,18 @@ private:
     int m_lineLength = 0; 
     
     int m_selectionAnchor = -1; 
-    int m_selectionStart = -1; // Nibble index of selection start
-    // m_selectionEnd is public
+    int m_selectionStart = -1;
+    int m_selectionEnd = -1;   
+    
 
-    // Helper to calculate geometry
     void calculateMetrics(); 
     void setCursorPosition(int newPos); 
     void clearSelection();
 
-    // <<<<<<<<<<<<<<<<< DECLARACIONES AÑADIDAS >>>>>>>>>>>>>>>>>>>
-    void handleAsciiInput(const QString &text);
+    void handleAsciiInput(const QString &text); 
     void handleDelete();
-    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-signals:
-    void dataChanged(); // Emitted when a change occurs
+    int nibbleIndexAt(const QPoint &point, bool *isHexArea) const; 
+    void handleHexInput(const QString &text); 
 };
 
-#endif // HEXEDITORAREA_H
+#endif

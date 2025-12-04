@@ -615,7 +615,7 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
     qint64 dataSize = data.size();
     qint64 needleSize = needle.size();
     
-    qint64 startBytePos = m_hexEditorArea->cursorPosition() / 2; 
+    qint64 currentBytePos = m_hexEditorArea->cursorPosition() / 2; 
 
     QByteArray searchData = caseSensitive ? data : data.toLower();
     QByteArray searchNeedle = caseSensitive ? needle : needle.toLower();
@@ -623,18 +623,71 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
     qint64 foundPos = -1;
     
     if (!backwards) {
-        foundPos = searchData.indexOf(searchNeedle, startBytePos);
+        // --- FORWARD SEARCH (Búsqueda hacia adelante) ---
+        
+        qint64 searchStart;
+        
+        // 1. Si hay una selección activa (resultado de una búsqueda anterior), 
+        //    el punto de partida para la siguiente búsqueda debe ser justo después de la selección.
+        if (m_hexEditorArea->selectionEnd() != -1) { // USANDO GETTER
+            searchStart = m_hexEditorArea->selectionEnd() / 2; // USANDO GETTER
+        } 
+        // 2. Si no hay selección, el cursor está en 'currentBytePos'.
+        else if (currentBytePos < dataSize && searchData.mid(currentBytePos, needleSize) == searchNeedle) {
+            // Si el cursor está al inicio de una coincidencia, saltar un byte para encontrar la siguiente.
+            searchStart = currentBytePos + 1;
+        } else {
+            // De lo contrario, empezar desde la posición actual del cursor.
+            searchStart = currentBytePos;
+        }
+
+        // Asegurarse de que el punto de inicio no exceda el tamaño de los datos.
+        searchStart = std::min(searchStart, dataSize); 
+
+        foundPos = searchData.indexOf(searchNeedle, searchStart);
         
         if (foundPos == -1 && wrap) {
+            // Búsqueda con 'Wrap around': Buscar desde el inicio.
             foundPos = searchData.indexOf(searchNeedle, 0);
+            
+            // Si se encuentra una coincidencia, asegurar que esté ANTES del punto de inicio original.
+            if (foundPos != -1 && foundPos >= searchStart) {
+                foundPos = -1; 
+            }
         }
         
     } else {
-        qint64 searchStart = startBytePos > 0 ? startBytePos - 1 : dataSize - 1;
-        foundPos = searchData.lastIndexOf(searchNeedle, searchStart);
+        // --- BACKWARD SEARCH (Búsqueda hacia atrás) ---
+        
+        qint64 searchEnd;
+        
+        // 1. Si hay una selección activa, buscar hasta el byte anterior al inicio de la selección.
+        if (m_hexEditorArea->selectionStart() != -1) { // USANDO GETTER
+            searchEnd = m_hexEditorArea->selectionStart() / 2 - 1; // USANDO GETTER
+        }
+        // 2. Si no hay selección, buscar hasta el byte anterior al cursor.
+        else {
+             searchEnd = currentBytePos - 1;
+             
+             // Si el cursor está justo después de una coincidencia, necesitamos saltarla.
+             if (currentBytePos >= needleSize && searchData.mid(currentBytePos - needleSize, needleSize) == searchNeedle) {
+                searchEnd = currentBytePos - needleSize - 1;
+             }
+        }
+        
+        // Asegurarse de que el punto final no sea negativo.
+        searchEnd = std::max((qint64)0, searchEnd); 
+
+        foundPos = searchData.lastIndexOf(searchNeedle, searchEnd);
         
         if (foundPos == -1 && wrap) {
+            // Búsqueda con 'Wrap around': Buscar desde el final.
             foundPos = searchData.lastIndexOf(searchNeedle, dataSize - 1);
+            
+            // Si se encuentra una coincidencia, asegurar que esté DESPUÉS del punto de finalización original.
+            if (foundPos != -1 && foundPos <= searchEnd) {
+                foundPos = -1;
+            }
         }
     }
 
@@ -660,7 +713,10 @@ void hexandtabler::replaceOne() {
     bool caseSensitive = m_findReplaceDialog->isCaseSensitive();
     bool wrap = m_findReplaceDialog->isWrapped();
 
-    qint64 currentBytePos = m_hexEditorArea->cursorPosition() / 2; 
+    // Usar el inicio de la selección si está activa, sino la posición actual del cursor. (CORRECCIÓN)
+    qint64 currentBytePos = (m_hexEditorArea->selectionStart() != -1) 
+                            ? (m_hexEditorArea->selectionStart() / 2) 
+                            : (m_hexEditorArea->cursorPosition() / 2); 
     
     QByteArray data = m_hexEditorArea->hexData();
 
@@ -679,7 +735,18 @@ void hexandtabler::replaceOne() {
         replaced = true;
     }
 
+    // El punto de inicio de la búsqueda es el final del bloque reemplazado (si se reemplazó)
+    // o la posición del cursor/coincidencia actual (si no se reemplazó).
     qint64 searchStart = replaced ? currentBytePos + replacement.size() : currentBytePos;
+    if (!replaced) {
+        // Si no se reemplazó, y la coincidencia está en la posición actual, saltar un byte
+        if (currentDataCheck == searchNeedle) {
+             searchStart = currentBytePos + 1;
+        } else {
+             // Si no hay coincidencia, buscar desde la posición actual del cursor
+             searchStart = m_hexEditorArea->cursorPosition() / 2;
+        }
+    }
     
     QByteArray searchData = caseSensitive ? m_hexEditorArea->hexData() : m_hexEditorArea->hexData().toLower();
     qint64 foundPos = searchData.indexOf(searchNeedle, searchStart);
@@ -689,7 +756,7 @@ void hexandtabler::replaceOne() {
         m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
     } else if (wrap) {
         foundPos = searchData.indexOf(searchNeedle, 0);
-        if (foundPos != -1) {
+        if (foundPos != -1 && foundPos < searchStart) {
              m_hexEditorArea->goToOffset(foundPos);
              m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
         } else {
@@ -725,7 +792,8 @@ void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replac
             
             offset += (replacement.size() - needle.size()); 
             
-            pos = lower_data.indexOf(searchNeedle, pos + needle.size());
+            pos = lower_data.indexOf(searchNeedle, pos + replacement.size() + offset);
+            
             count++;
         }
         
@@ -1003,7 +1071,6 @@ void hexandtabler::on_actionInsertKatakana_triggered() {
     insertSeries(series);
 }
 
-// <<<<<<<<<<<<<<<<<<<< NUEVA FUNCIÓN PARA EL ALFABETO CIRÍLICO >>>>>>>>>>>>>>>>>>>>>>
 void hexandtabler::on_actionInsertCyrillic_triggered() {
     QList<QString> series;
     int startCode = 0x0410; // Letra mayúscula Cirílica A (А)
@@ -1016,7 +1083,6 @@ void hexandtabler::on_actionInsertCyrillic_triggered() {
     
     insertSeries(series);
 }
-// <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
 // --------------------------------------------------------------------------------
 // --- EVENT HANDLERS ---
@@ -1152,9 +1218,5 @@ void hexandtabler::prependToRecentFiles(const QString &filePath) {
 void hexandtabler::refreshModelFromArea() {
     // This function is not required as all updates are driven by signals/slots
 }
-
-// --------------------------------------------------------------------------------
-// --- MOC INCLUDE FIX ---
-// --------------------------------------------------------------------------------
 
 #include "hexandtabler.moc"
