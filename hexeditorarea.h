@@ -8,12 +8,15 @@
 #include <QString> 
 #include <QMouseEvent> 
 #include <QKeySequence> 
+#include <QSize> 
+#include <QEvent> 
 
 class HexEditorArea : public QAbstractScrollArea
 {
     Q_OBJECT
 public:
     explicit HexEditorArea(QWidget *parent = nullptr);
+    QSize minimumSizeHint() const override; 
 
     void setHexData(const QByteArray &data);
     QByteArray hexData() const;
@@ -43,6 +46,7 @@ protected:
     void mouseMoveEvent(QMouseEvent *event) override;   
     void mouseReleaseEvent(QMouseEvent *event) override; 
     void resizeEvent(QResizeEvent *event) override;
+    void changeEvent(QEvent *event) override; 
 
 private:
     enum EditMode { 

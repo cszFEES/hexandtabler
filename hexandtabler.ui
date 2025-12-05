@@ -78,11 +78,13 @@
     <property name="title">
      <string>Table</string>
     </property>
-    <addaction name="actionToggleTable"/> 
-    <addaction name="separator"/> 
+    <addaction name="actionToggleTable"/>
+    <addaction name="separator"/>
     <addaction name="actionLoadTable"/>
     <addaction name="actionSaveTable"/>
     <addaction name="actionSaveTableAs"/>
+    <addaction name="separator"/>
+    <addaction name="actionClearTable"/>
     <addaction name="separator"/>
     <addaction name="menuInsertSeries"/>
     <widget class="QMenu" name="menuInsertSeries">
@@ -93,7 +95,7 @@
      <addaction name="actionInsertLatinLower"/>
      <addaction name="actionInsertHiragana"/>
      <addaction name="actionInsertKatakana"/>
-     <addaction name="actionInsertCyrillic"/> 
+     <addaction name="actionInsertCyrillic"/>
     </widget>
    </widget>
    <widget class="QMenu" name="menuHelp">
@@ -275,6 +277,11 @@
   <action name="actionInsertCyrillic">
    <property name="text">
     <string>Cyrillic (А-Я)</string>
+   </property>
+  </action>
+  <action name="actionClearTable">
+   <property name="text">
+    <string>Clear Table</string>
    </property>
   </action>
  </widget>

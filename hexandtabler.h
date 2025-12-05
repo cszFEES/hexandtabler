@@ -11,7 +11,6 @@
 #include <QModelIndexList> 
 #include <QVector> 
 
-// Forward declarations
 class HexEditorArea;
 class QTableWidget;
 class QDockWidget;
@@ -30,7 +29,6 @@ public:
     explicit hexandtabler(QWidget *parent = nullptr);
     ~hexandtabler();
     
-    // Public function required for find/replace
     QByteArray convertSearchString(const QString &input, int type) const; 
 
 protected:
@@ -53,33 +51,31 @@ private slots:
     
     void on_actionGoTo_triggered(); 
     
-    // --- FIND/REPLACE SLOTS ---
     void on_actionFind_triggered();
     void on_actionReplace_triggered(); 
-    void on_actionCopy_triggered();       // <-- AÑADIDO
-    void on_actionPaste_triggered();      // <-- AÑADIDO
+    void on_actionCopy_triggered();       
+    void on_actionPaste_triggered();      
     
     
-    // --- TABLE SLOTS (AÑADIDOS) ---
-    void on_actionToggleTable_triggered();        // <-- AÑADIDO
-    void on_actionLoadTable_triggered();          // <-- AÑADIDO
-    void on_actionSaveTable_triggered();          // <-- AÑADIDO
-    void on_actionSaveTableAs_triggered();        // <-- AÑADIDO
-    void on_actionInsertLatinUpper_triggered();   // <-- AÑADIDO
-    void on_actionInsertLatinLower_triggered();   // <-- AÑADIDO
-    void on_actionInsertHiragana_triggered();     // <-- AÑADIDO
-    void on_actionInsertKatakana_triggered();     // <-- AÑADIDO
-    void on_actionInsertCyrillic_triggered();     // <-- AÑADIDO
+    void on_actionToggleTable_triggered();        
+    void on_actionLoadTable_triggered();          
+    void on_actionSaveTable_triggered();          
+    void on_actionSaveTableAs_triggered();        
+    void on_actionInsertLatinUpper_triggered();   
+    void on_actionInsertLatinLower_triggered();   
+    void on_actionInsertHiragana_triggered();     
+    void on_actionInsertKatakana_triggered();     
+    void on_actionInsertCyrillic_triggered();     
+    void on_actionClearTable_triggered(); 
     
-    // --- DATA HANDLING SLOTS (AÑADIDOS) ---
-    void handleDataEdited();                     // <-- AÑADIDO
-    void handleTableItemChanged(QTableWidgetItem *item); // <-- AÑADIDO
+    void handleDataEdited();                     
+    void handleTableItemChanged(QTableWidgetItem *item); 
     
 
 private:
     Ui::hexandtabler *ui;
     HexEditorArea *m_hexEditorArea = nullptr;
-    QTableWidget *m_tableWidget = nullptr;       // <-- CORRECTO: Usado en CPP como m_tableWidget
+    QTableWidget *m_tableWidget = nullptr;       
     QDockWidget *m_tableDock = nullptr;
     FindReplaceDialog *m_findReplaceDialog = nullptr; 
     
@@ -88,14 +84,11 @@ private:
     QString m_currentTablePath; 
     bool m_isModified = false;
     
-    // Undo/Redo
     QList<QByteArray> m_undoStack;
     QList<QByteArray> m_redoStack;
 
-    // Table Mapping
     QString m_charMap[256]; 
 
-    // Find/Replace Logic
     void findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards);
     void replaceOne();
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
@@ -103,7 +96,6 @@ private:
     void findNextRelative(const QString &searchText, bool wrap, bool backwards);
     QVector<qint8> calculateRelativeOffsets(const QString &input) const; 
     
-    // Recent Files
     enum { MaxRecentFiles = 5 };
     QAction *recentFileActions[MaxRecentFiles];
 
@@ -121,16 +113,15 @@ private:
     void pushUndoState();
     void updateUndoRedoActions();
     
-    // --- TABLE HELPERS ---
     bool saveTableFile(const QString &filePath); 
     bool loadTableFile(const QString &filePath);
     void insertSeries(const QList<QString> &series); 
+    void clearCharMappingTable();
     
-    // Recent Files Helpers
     void createRecentFileActions();
     void loadRecentFiles();
     void updateRecentFileActions();
-    void prependToRecentFiles(const QString &filePath); // <-- AÑADIDO
+    void prependToRecentFiles(const QString &filePath); 
     
     void openRecentFile(); 
 

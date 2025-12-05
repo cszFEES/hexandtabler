@@ -13,6 +13,7 @@
 #include <QDebug> 
 #include <QChar> 
 #include <QKeySequence>
+#include <QStyleOptionSlider>
 
 HexEditorArea::HexEditorArea(QWidget *parent)
     : QAbstractScrollArea(parent),
@@ -48,6 +49,19 @@ HexEditorArea::HexEditorArea(QWidget *parent)
     setFocusPolicy(Qt::StrongFocus);
 }
 
+QSize HexEditorArea::minimumSizeHint() const {
+    
+    int minWidth = m_lineLength; 
+    
+    minWidth += 2 * frameWidth(); 
+    
+    if (verticalScrollBarPolicy() != Qt::ScrollBarAlwaysOff) {
+        minWidth += verticalScrollBar()->sizeHint().width();
+    }
+    
+    return QSize(minWidth, 0); 
+}
+
 void HexEditorArea::setCharMapping(const QString (&mapping)[256]) {
     for (int i = 0; i < 256; ++i) {
         m_charMap[i] = mapping[i];
@@ -79,7 +93,17 @@ void HexEditorArea::updateViewMetrics() {
     calculateMetrics();
     int totalLines = (m_data.size() + m_bytesPerLine - 1) / m_bytesPerLine;
     verticalScrollBar()->setRange(0, std::max(0, totalLines * m_charHeight - viewport()->height()));
+    
+    updateGeometry(); 
+    
     viewport()->update();
+}
+
+void HexEditorArea::changeEvent(QEvent *event) {
+    QAbstractScrollArea::changeEvent(event);
+    if (event->type() == QEvent::FontChange) {
+        updateViewMetrics();
+    }
 }
 
 void HexEditorArea::setHexData(const QByteArray &data) {
@@ -282,7 +306,7 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
 
         int currentY = line * m_charHeight - scrollY;
         
-        // 1. DRAW OFFSET
+        
         QString offsetStr = QString("%1").arg(startByteIndex, 8, 16, QChar('0')).toUpper();
         painter.setPen(pal.color(QPalette::WindowText));
         painter.drawText(0, currentY, m_charWidth * 10, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, offsetStr);
@@ -302,13 +326,13 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
             QColor bgColor = pal.color(QPalette::Base);
             if (isSelected) {
                 bgColor = pal.color(QPalette::Highlight);
-            } else if (isCursorByte) { // Resaltar el byte completo si el cursor está en él
+            } else if (isCursorByte) {
                 bgColor = pal.color(QPalette::Midlight);
             }
 
-            // Fill hex area (3 chars: high nibble, low nibble, space)
+            
             painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, bgColor);
-            // Fill ascii area (1 char)
+            
             painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, bgColor);
             
             QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
@@ -319,19 +343,19 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
                  painter.setPen(pal.color(QPalette::WindowText));
             }
             
-            // Draw high nibble (slot 0)
+            
             int hexStart = m_hexStartCol + i * (3 * m_charWidth);
             painter.drawText(hexStart, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(0));
             
-            // Draw low nibble (slot 1)
+            
             painter.drawText(hexStart + m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(1));
             
-            // Draw space (slot 2)
+            
             painter.drawText(hexStart + 2 * m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, " ");
             
-            // NO DRAW NIBBLE CURSOR
             
-            // Draw ASCII
+            
+            
             QString charStr = m_charMap[byte];
             if (!isSelected && !isCursorByte) {
                  painter.setPen(pal.color(QPalette::WindowText));
@@ -374,9 +398,9 @@ void HexEditorArea::handleHexInput(const QString &text) {
     int hexValue = -1;
 
     if (inputChar.isDigit()) {
-        hexValue = inputChar.digitValue(); // 0-9
+        hexValue = inputChar.digitValue();
     } else {
-        // CORRECCIÓN: Manejo manual de A-F para evitar errores de digitValue() en letras.
+        
         QChar lowerChar = inputChar.toLower();
         if (lowerChar >= 'a' && lowerChar <= 'f') {
             hexValue = lowerChar.unicode() - QChar('a').unicode() + 10;
@@ -431,8 +455,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
         clearSelection(); 
     }
     
-    // CORRECCIÓN ROBUSTA DE TAB: Interceptar QKey_Tab con el código de tecla.
-    // Esto previene que el QAbstractScrollArea y QMainWindow muevan el foco.
+    
     if (event->key() == Qt::Key_Tab) {
         if (m_editMode == HexMode) {
             m_editMode = AsciiMode;
@@ -527,7 +550,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
         return;
     }
     
-    // --- commands ---
+    
     if (event->matches(QKeySequence::Copy)) {
         copySelection();
         return;
@@ -538,7 +561,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
         return;
     }
     
-    // --- text entry (ASCII/HEX) ---
+    
     QString text = event->text();
     if (!text.isEmpty()) {
         if (m_editMode == AsciiMode) {
@@ -587,19 +610,34 @@ void HexEditorArea::mousePressEvent(QMouseEvent *event) {
         int byteIndex = byteIndexAt(event->pos());
         if (byteIndex != -1) {
             int colX = event->pos().x();
+            int newPos = byteIndex * 2; 
 
             m_editMode = (colX >= m_asciiStartCol) ? AsciiMode : HexMode;
             m_currentNibbleIndex = 0;
-
-            m_selectionAnchor = byteIndex * 2;  
-            setCursorPosition(m_selectionAnchor);
+            
+            
+            setCursorPosition(newPos); 
+            
             
             if (!(event->modifiers() & Qt::ShiftModifier)) {
-                clearSelection();
-            }
-            
-            if (event->modifiers() & Qt::ShiftModifier) {
-                setSelection(m_selectionAnchor, m_selectionAnchor + 2);
+                
+                clearSelection(); 
+                
+                
+                m_selectionAnchor = newPos;  
+                
+                
+                setSelection(m_selectionAnchor, m_selectionAnchor + 2); 
+            } else {
+                
+                
+                
+                if (m_selectionAnchor == -1) {
+                    m_selectionAnchor = m_selectionStart != -1 ? m_selectionStart : newPos;
+                }
+                
+                
+                setSelection(m_selectionAnchor, newPos + 2); 
             }
         }
     }
@@ -610,11 +648,41 @@ void HexEditorArea::mouseMoveEvent(QMouseEvent *event) {
     if (event->buttons() & Qt::LeftButton) {
         int byteIndex = byteIndexAt(event->pos());
         if (byteIndex != -1 && m_selectionAnchor != -1) {
-            int newEnd = byteIndex * 2 + 2; 
             
-            setCursorPosition(newEnd);
             
-            setSelection(m_selectionAnchor, newEnd);
+            int currentByteStart = byteIndex * 2;
+            
+            int anchorByteStart = m_selectionAnchor; 
+
+            int startPos, endPos;
+            
+            
+            if (anchorByteStart <= currentByteStart) {
+                
+                startPos = anchorByteStart;
+                endPos = currentByteStart + 2; 
+            } else {
+                
+                startPos = currentByteStart; 
+                endPos = anchorByteStart + 2; 
+            }
+
+            setSelection(startPos, endPos);
+            
+            
+            int line = byteIndex / m_bytesPerLine;
+            int lineY = line * m_charHeight;
+            int scrollY = verticalScrollBar()->value();
+            int visibleHeight = viewport()->height();
+
+            if (lineY < scrollY) {
+                verticalScrollBar()->setValue(lineY);
+            } else if (lineY + m_charHeight > scrollY + visibleHeight) {
+                verticalScrollBar()->setValue(lineY + m_charHeight - visibleHeight);
+            }
+            
+            
+            m_cursorPos = endPos;
         }
     }
     QAbstractScrollArea::mouseMoveEvent(event);
@@ -622,6 +690,10 @@ void HexEditorArea::mouseMoveEvent(QMouseEvent *event) {
 
 void HexEditorArea::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
+        
+        
+        
+        
         if (m_selectionStart == m_selectionEnd) {
              clearSelection();
         }

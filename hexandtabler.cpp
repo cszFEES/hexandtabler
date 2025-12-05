@@ -1,7 +1,6 @@
 #include "hexandtabler.h" 
 #include "ui_hexandtabler.h" 
 
-// Essential Qt Includes
 #include <QFileDialog>
 #include <QFile>
 #include <QMessageBox>
@@ -38,21 +37,13 @@
 #include <QDialog> 
 #include <QDir> 
 
-// Custom widget include
 #include "hexeditorarea.h" 
 
-// --------------------------------------------------------------------------------
-// --- GLOBAL CONSTANTS---
-// --------------------------------------------------------------------------------
 const char organizationName[] = "FEES"; 
 const char applicationName[] = "hexandtabler"; 
 const int MAX_UNDO_STATES = 50; 
 const int MIN_CHARS_FOR_RELATIVE_SEARCH = 3; 
 
-
-// --------------------------------------------------------------------------------
-// --- AUXILIARY CLASS: FindReplaceDialog ---
-// --------------------------------------------------------------------------------
 
 class FindReplaceDialog : public QDialog
 {
@@ -123,7 +114,6 @@ private:
 FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     : QDialog(parent)
 {
-    // --- 1. Form Layout (Find/Replace Inputs) ---
     findLineEdit = new QLineEdit;
     replaceLineEdit = new QLineEdit;
     
@@ -136,7 +126,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     formLayout->addRow(findLabel, findLineEdit);
     formLayout->addRow(replaceLabel, replaceLineEdit);
 
-    // --- 2. Search Type Selection ---
     hexRadioButton = new QRadioButton(tr("Hexadecimal (FF 1A)"));
     charRadioButton = new QRadioButton(tr("Character (Table)"));
     relativeRadioButton = new QRadioButton(tr("Relative (ADA -> 000300)")); 
@@ -148,7 +137,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     typeLayout->addWidget(charRadioButton);
     typeLayout->addWidget(relativeRadioButton); 
 
-    // --- 3. Checkboxes (Options) ---
     caseSensitiveCheckBox = new QCheckBox(tr("Case sensitive"));
     wrapCheckBox = new QCheckBox(tr("Wrap around"));
     backwardsCheckBox = new QCheckBox(tr("Search backwards"));
@@ -158,7 +146,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     optionsLayout->addWidget(wrapCheckBox);
     optionsLayout->addWidget(backwardsCheckBox);
     
-    // --- 4. Buttons (Actions) ---
     findNextButton = new QPushButton(tr("Find Next"));
     findNextButton->setDefault(true);
     replaceButton = new QPushButton(tr("Replace"));
@@ -171,7 +158,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     buttonLayout->addWidget(replaceAllButton);
     buttonLayout->addWidget(closeButton);
     
-    // --- 5. Main Layout ---
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->addLayout(formLayout);
     mainLayout->addLayout(typeLayout); 
@@ -179,7 +165,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     mainLayout->addLayout(buttonLayout);
     setLayout(mainLayout);
     
-    // --- 6. Connections ---
     connect(findNextButton, &QPushButton::clicked, this, &FindReplaceDialog::onFindNext);
     connect(replaceButton, &QPushButton::clicked, this, &FindReplaceDialog::replaceClicked);
     connect(replaceAllButton, &QPushButton::clicked, this, &FindReplaceDialog::replaceAllClicked);
@@ -189,7 +174,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
         backwardsCheckBox->setChecked(false);
     });
     
-    // Initial state
     setFindMode();
     setFixedSize(sizeHint());
 }
@@ -197,10 +181,6 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
 void FindReplaceDialog::onFindNext() {
     emit findNextClicked(backwardsCheckBox->isChecked());
 }
-
-// --------------------------------------------------------------------------------
-// --- CONVERSION HELPER FUNCTION ---
-// --------------------------------------------------------------------------------
 
 QByteArray hexandtabler::convertSearchString(const QString &input, int type) const {
     if (type == FindReplaceDialog::HexSearch) { 
@@ -236,19 +216,13 @@ QByteArray hexandtabler::convertSearchString(const QString &input, int type) con
     return QByteArray();
 }
 
-// --------------------------------------------------------------------------------
-// --- MAIN WINDOW: hexandtabler ---
-// --------------------------------------------------------------------------------
-
 hexandtabler::hexandtabler(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::hexandtabler)
 {
-    // 1. Setup UI 
     ui->setupUi(this);
     setWindowIcon(QIcon(":/icon.png"));
     
-    // 2. Setup Conversion Table (DockWidget y QTableWidget)
     m_tableWidget = new QTableWidget(this); 
     m_tableDock = new QDockWidget(tr("Conversion Table"), this);
     
@@ -310,7 +284,6 @@ hexandtabler::hexandtabler(QWidget *parent) :
             }
             this->findNext(needle, m_findReplaceDialog->isCaseSensitive(), m_findReplaceDialog->isWrapped(), backwards);
         });
-        // -----------------------------------------------------------------
 
         connect(m_findReplaceDialog, &FindReplaceDialog::replaceAllClicked, this, [this]() {
             QByteArray needle = this->convertSearchString(m_findReplaceDialog->findText(), m_findReplaceDialog->searchType());
@@ -355,10 +328,6 @@ void hexandtabler::closeEvent(QCloseEvent *event)
         event->ignore();
     }
 }
-
-// --------------------------------------------------------------------------------
-// --- FILE AND SAVE OPERATIONS ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionOpen_triggered() {
     if (!maybeSave()) return; 
@@ -546,10 +515,6 @@ void hexandtabler::on_actionGoTo_triggered() {
 }
 
 
-// --------------------------------------------------------------------------------
-// --- UNDO/REDO LOGIC ---
-// --------------------------------------------------------------------------------
-
 void hexandtabler::pushUndoState() {
     if (!m_hexEditorArea) return;
     
@@ -603,10 +568,6 @@ void hexandtabler::on_actionRedo_triggered() {
     m_isModified = true;
     updateUndoRedoActions();
 }
-
-// --------------------------------------------------------------------------------
-// --- RELATIVE SEARCH ---
-// --------------------------------------------------------------------------------
 
 QVector<qint8> hexandtabler::calculateRelativeOffsets(const QString &input) const {
     QVector<qint8> offsets;
@@ -714,10 +675,6 @@ void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool b
             .arg(searchText));
     }
 }
-
-// --------------------------------------------------------------------------------
-// --- FIND/REPLACE SLOTS AND LOGIC ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::on_actionFind_triggered() {
     if (!m_findReplaceDialog) return;
@@ -930,9 +887,6 @@ void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replac
 }
 
 
-// --- PASTE/COPY SLOTS --- 
-// --------------------------------------------------------------------------------
-
 void hexandtabler::on_actionCopy_triggered()
 {
     if (m_hexEditorArea) {
@@ -946,10 +900,6 @@ void hexandtabler::on_actionPaste_triggered()
         m_hexEditorArea->pasteFromClipboard();
     }
 }
-
-// --------------------------------------------------------------------------------
-// --- TABLE LOGIC ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::setupConversionTable() {
     if (!m_tableWidget) return;
@@ -965,12 +915,10 @@ void hexandtabler::setupConversionTable() {
     m_tableWidget->setFont(QFont("Monospace", 10)); 
 
     for (int i = 0; i < 256; ++i) {
-        // Columna 0: Hex Value 
         QTableWidgetItem *hexItem = new QTableWidgetItem(QString("%1").arg(i, 2, 16, QChar('0')).toUpper());
         hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable);
         m_tableWidget->setItem(i, 0, hexItem);
         
-        // Columna 1: Assigned Character 
         QString defaultChar;
         QChar c = QChar(i);
         
@@ -1105,6 +1053,30 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
     return true;
 }
 
+
+void hexandtabler::clearCharMappingTable() {
+    if (!m_tableWidget) return; 
+
+    QSignalBlocker blocker(m_tableWidget); 
+    
+    for (int i = 0; i < 256; ++i) {
+        m_charMap[i] = "."; 
+        
+        QTableWidgetItem *item = m_tableWidget->item(i, 1); 
+        if (item) {
+            item->setText(".");
+        }
+    }
+    
+    if (m_hexEditorArea) { 
+        m_hexEditorArea->setCharMapping(m_charMap); 
+    }
+    m_isModified = true;
+}
+void hexandtabler::on_actionClearTable_triggered() {
+    clearCharMappingTable();
+}
+
 void hexandtabler::insertSeries(const QList<QString> &series) {
     if (!m_tableWidget || series.isEmpty()) return;
 
@@ -1189,10 +1161,6 @@ void hexandtabler::on_actionInsertCyrillic_triggered() {
     insertSeries(series);
 }
 
-// --------------------------------------------------------------------------------
-// --- EVENT HANDLERS ---
-// --------------------------------------------------------------------------------
-
 void hexandtabler::handleDataEdited() {
     m_isModified = true;
     pushUndoState();
@@ -1224,10 +1192,6 @@ void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
     }
 }
 
-
-// --------------------------------------------------------------------------------
-// --- RECENT FILES LOGIC ---
-// --------------------------------------------------------------------------------
 
 void hexandtabler::openRecentFile() {
     QAction *action = qobject_cast<QAction *>(sender());
@@ -1317,7 +1281,6 @@ void hexandtabler::prependToRecentFiles(const QString &filePath) {
 }
 
 void hexandtabler::refreshModelFromArea() {
-    // Left empty as model updates are handled by dataChanged signal
 }
 
 #include "hexandtabler.moc"
