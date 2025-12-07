@@ -10,6 +10,9 @@
 #include <QCloseEvent>
 #include <QModelIndexList> 
 #include <QVector> 
+#include <QMap>
+#include <QFuture>
+#include <QFutureWatcher>
 
 class HexEditorArea;
 class QTableWidget;
@@ -20,6 +23,13 @@ class QRadioButton;
 namespace Ui {
 class hexandtabler;
 }
+
+// Estructura para manejar frases conocidas
+struct KnownPhrase {
+    QString text;
+    int length = 0;
+    QMap<QChar, QList<int>> pattern;
+};
 
 class hexandtabler : public QMainWindow
 {
@@ -54,38 +64,56 @@ private slots:
     void on_actionFind_triggered();
     void on_actionReplace_triggered(); 
     void on_actionCopy_triggered();       
-    void on_actionPaste_triggered();      
+    void on_actionPaste_triggered();
     
+    void on_actionToggleTable_triggered(bool checked);
     
-    void on_actionToggleTable_triggered();        
-    void on_actionLoadTable_triggered();          
-    void on_actionSaveTable_triggered();          
-    void on_actionSaveTableAs_triggered();        
-    void on_actionInsertLatinUpper_triggered();   
-    void on_actionInsertLatinLower_triggered();   
-    void on_actionInsertHiragana_triggered();     
-    void on_actionInsertKatakana_triggered();     
-    void on_actionInsertCyrillic_triggered();     
-    void on_actionClearTable_triggered(); 
+    void on_actionLoadTable_triggered();
+    void on_actionSaveTable_triggered();
+    void on_actionSaveTableAs_triggered();
+    void on_actionClearTable_triggered();
     
-    void handleDataEdited();                     
-    void handleTableItemChanged(QTableWidgetItem *item); 
+    void on_actionInsertLatinUpper_triggered();
+    void on_actionInsertLatinLower_triggered();
+    void on_actionInsertHiragana_triggered();
+    void on_actionInsertKatakana_triggered();
+    void on_actionInsertCyrillic_triggered();
     
+    void openRecentFile(); 
+    void handleTableItemChanged(QTableWidgetItem *item);
+    void handleDataEdited(); 
+
+    // Slots para el Hex Guesser
+    void on_actionGuessEncoding_triggered();
+    void handleGuessEncodingFinished();
 
 private:
     Ui::hexandtabler *ui;
     HexEditorArea *m_hexEditorArea = nullptr;
-    QTableWidget *m_tableWidget = nullptr;       
+    QTableWidget *m_tableWidget = nullptr; 
     QDockWidget *m_tableDock = nullptr;
-    FindReplaceDialog *m_findReplaceDialog = nullptr; 
-    
     QByteArray m_fileData;
+    FindReplaceDialog *m_findReplaceDialog = nullptr;
+    
     QString m_currentFilePath;
     QString m_currentTablePath; 
     bool m_isModified = false;
+
+    // Hex Guesser
+    QFuture<QList<QMap<QChar, quint8>>> m_guessSearchFuture; 
+    QMap<QChar, QList<int>> calculatePattern(const QString &text) const;
+    QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases);
+    void addFoundMappingToTable(const QMap<QChar, quint8> &mapping);
     
-    QList<QByteArray> m_undoStack;
-    QList<QByteArray> m_redoStack;
+    struct EditorState {
+        QByteArray data;
+        int cursorPos;
+        int selectionStart;
+        int selectionEnd;
+    };
+    
+    QList<EditorState> m_undoStack;
+    QList<EditorState> m_redoStack;
 
     QString m_charMap[256]; 
 
@@ -94,12 +122,11 @@ private:
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
     
     void findNextRelative(const QString &searchText, bool wrap, bool backwards);
-    QVector<qint8> calculateRelativeOffsets(const QString &input) const; 
+    QVector<qint16> calculateRelativeOffsets(const QString &input) const; 
     
     enum { MaxRecentFiles = 5 };
     QAction *recentFileActions[MaxRecentFiles];
-
-
+    
     void setupConversionTable();
     
     void loadFile(const QString &filePath);
@@ -122,9 +149,6 @@ private:
     void loadRecentFiles();
     void updateRecentFileActions();
     void prependToRecentFiles(const QString &filePath); 
-    
-    void openRecentFile(); 
-
 };
 
 #endif // HEXANDTABLER_H

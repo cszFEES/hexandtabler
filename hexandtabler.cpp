@@ -36,6 +36,12 @@
 #include <QRadioButton> 
 #include <QDialog> 
 #include <QDir> 
+#include <climits> 
+#include <QtConcurrent/QtConcurrent>
+#include <QListWidget>
+#include <QListWidgetItem>
+#include <QDialogButtonBox>
+
 
 #include "hexeditorarea.h" 
 
@@ -43,7 +49,7 @@ const char organizationName[] = "FEES";
 const char applicationName[] = "hexandtabler"; 
 const int MAX_UNDO_STATES = 50; 
 const int MIN_CHARS_FOR_RELATIVE_SEARCH = 3; 
-
+const qint16 WILD_CARD_OFFSET = SHRT_MIN; 
 
 class FindReplaceDialog : public QDialog
 {
@@ -224,6 +230,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
     setWindowIcon(QIcon(":/icon.png"));
     
     m_tableWidget = new QTableWidget(this); 
+    // Título restaurado a "Conversion Table"
     m_tableDock = new QDockWidget(tr("Conversion Table"), this);
     
     m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); 
@@ -289,7 +296,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
             QByteArray needle = this->convertSearchString(m_findReplaceDialog->findText(), m_findReplaceDialog->searchType());
             QByteArray replacement = this->convertSearchString(m_findReplaceDialog->replaceText(), m_findReplaceDialog->searchType());
             if (needle.isEmpty()) {
-                QMessageBox::warning(m_findReplaceDialog, tr("Input Error"), tr("Invalid search pattern."));
+                QMessageBox::warning(m_findReplaceDialog, tr("Replace Error"), tr("Invalid search pattern."));
                 return;
             }
             this->replaceAll(needle, replacement);
@@ -312,7 +319,6 @@ hexandtabler::hexandtabler(QWidget *parent) :
     updateUndoRedoActions();
     
     setWindowTitle(QString("%1 - %2").arg(applicationName).arg(tr("No File")));
-    setWindowIcon(QApplication::style()->standardIcon(QStyle::SP_DriveCDIcon));
 }
 
 hexandtabler::~hexandtabler()
@@ -416,6 +422,7 @@ void hexandtabler::loadFile(const QString &filePath) {
     if (m_hexEditorArea) {
         m_hexEditorArea->setHexData(m_fileData);
         m_hexEditorArea->goToOffset(0); 
+        m_hexEditorArea->setSelection(-1, -1); // Clear selection
     }
     
     m_currentFilePath = filePath;
@@ -456,11 +463,10 @@ void hexandtabler::on_actionExit_triggered() {
 }
 
 void hexandtabler::on_actionAbout_triggered() {
-    QMessageBox::about(this, tr("About ") + applicationName,
-                       tr("<h2>") + applicationName + tr(" 1.0</h2>"
-                          "<p>A simple Hex Editor and Table Conversion Utility.</p>"
-                          "<p>Developed by [FEES] for testing purposes.</p>"));
+    QMessageBox::about(this, tr("hexandtabler"), 
+                       "<p>Author: FEES</p>");
 }
+
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
     QPalette p = QApplication::palette();
@@ -518,13 +524,18 @@ void hexandtabler::on_actionGoTo_triggered() {
 void hexandtabler::pushUndoState() {
     if (!m_hexEditorArea) return;
     
-    m_fileData = m_hexEditorArea->hexData();
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
+    EditorState currentState;
+    currentState.data = m_hexEditorArea->hexData();
+    currentState.cursorPos = m_hexEditorArea->cursorPosition();
+    currentState.selectionStart = m_hexEditorArea->selectionStart();
+    currentState.selectionEnd = m_hexEditorArea->selectionEnd();
     
-    if (!m_undoStack.isEmpty() && m_undoStack.last() == m_fileData) {
+    if (!m_undoStack.isEmpty() && m_undoStack.last().data == currentState.data) {
         return; 
     }
     
-    m_undoStack.append(m_fileData);
+    m_undoStack.append(currentState);
     
     if (m_undoStack.size() > MAX_UNDO_STATES) {
         m_undoStack.removeFirst();
@@ -545,12 +556,18 @@ void hexandtabler::updateUndoRedoActions() {
 void hexandtabler::on_actionUndo_triggered() {
     if (!m_hexEditorArea || m_undoStack.size() <= 1) return;
     
-    QByteArray currentState = m_undoStack.takeLast();
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
+    EditorState currentState = m_undoStack.takeLast();
     m_redoStack.append(currentState);
     
-    QByteArray newState = m_undoStack.last();
-    m_fileData = newState;
+    EditorState newState = m_undoStack.last();
+    
+    m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
+    
+    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
+    m_hexEditorArea->setCursorPosition(newState.cursorPos); 
+    m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
     m_isModified = true; 
     updateUndoRedoActions();
@@ -559,30 +576,54 @@ void hexandtabler::on_actionUndo_triggered() {
 void hexandtabler::on_actionRedo_triggered() {
     if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
     
-    QByteArray newState = m_redoStack.takeLast();
-    
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
+    EditorState newState = m_redoStack.takeLast();
     m_undoStack.append(newState);
-    m_fileData = newState;
+    
+    m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
+    
+    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
+    m_hexEditorArea->setCursorPosition(newState.cursorPos);
+    m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
     m_isModified = true;
     updateUndoRedoActions();
 }
 
-QVector<qint8> hexandtabler::calculateRelativeOffsets(const QString &input) const {
-    QVector<qint8> offsets;
+QVector<qint16> hexandtabler::calculateRelativeOffsets(const QString &input) const {
+    QVector<qint16> offsets;
     
     if (input.length() < MIN_CHARS_FOR_RELATIVE_SEARCH) {
         return offsets; 
     }
 
-    qint8 baseValue = input.at(0).toLatin1();
-    
+    int firstCharIndex = -1;
     for (int i = 0; i < input.length(); ++i) {
-        qint8 currentValue = input.at(i).toLatin1();
-        qint8 offset = currentValue - baseValue; 
-        
-        offsets.append(offset);
+        if (input.at(i).isLetter()) { 
+            firstCharIndex = i;
+            break;
+        }
+    }
+    
+    if (firstCharIndex == -1) {
+        return offsets; 
+    }
+
+    quint16 baseValue = input.at(firstCharIndex).unicode(); 
+
+    for (int i = 0; i < input.length(); ++i) {
+        QChar currentChar = input.at(i);
+
+        if (!currentChar.isLetter()) {
+            offsets.append(WILD_CARD_OFFSET);
+        } else {
+            quint16 currentValue = currentChar.unicode();
+            
+            qint16 offset = (qint16)currentValue - (qint16)baseValue; 
+            
+            offsets.append(offset);
+        }
     }
 
     return offsets;
@@ -590,11 +631,11 @@ QVector<qint8> hexandtabler::calculateRelativeOffsets(const QString &input) cons
 
 void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool backwards) {
     
-    QVector<qint8> offsets = calculateRelativeOffsets(searchText);
+    QVector<qint16> offsets = calculateRelativeOffsets(searchText);
     
     if (offsets.isEmpty()) {
         QMessageBox::information(this, tr("Relative Search"), 
-            tr("It requires %1 at least.")
+            tr("It requires %1 characters at least, and must contain at least one letter.")
             .arg(MIN_CHARS_FOR_RELATIVE_SEARCH));
         return;
     }
@@ -629,10 +670,17 @@ void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool b
         bool match = true;
         
         for (int k = 0; k < n; ++k) {
-            qint8 currentByte = data.at(i + k); 
-            qint8 actualOffset = currentByte - baseByte; 
             
-            if (actualOffset != offsets.at(k)) {
+            qint16 expectedOffset = offsets.at(k); 
+
+            if (expectedOffset == WILD_CARD_OFFSET) {
+                continue; 
+            }
+
+            qint8 currentByte = data.at(i + k); 
+            qint16 actualOffset = (qint16)currentByte - (qint16)baseByte; 
+            
+            if (actualOffset != expectedOffset) {
                 match = false;
                 break;
             }
@@ -650,10 +698,17 @@ void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool b
             bool match = true;
             
             for (int k = 0; k < n; ++k) {
-                qint8 currentByte = data.at(i + k); 
-                qint8 actualOffset = currentByte - baseByte; 
                 
-                if (actualOffset != offsets.at(k)) {
+                qint16 expectedOffset = offsets.at(k); 
+                
+                if (expectedOffset == WILD_CARD_OFFSET) {
+                    continue; 
+                }
+
+                qint8 currentByte = data.at(i + k); 
+                qint16 actualOffset = (qint16)currentByte - (qint16)baseByte; 
+                
+                if (actualOffset != expectedOffset) {
                     match = false;
                     break;
                 }
@@ -935,9 +990,9 @@ void hexandtabler::setupConversionTable() {
     }
 }
 
-void hexandtabler::on_actionToggleTable_triggered() {
+void hexandtabler::on_actionToggleTable_triggered(bool checked) {
     if (m_tableDock) {
-        m_tableDock->setVisible(ui->actionToggleTable->isChecked());
+        m_tableDock->setVisible(checked);
     }
 }
 
@@ -1073,9 +1128,11 @@ void hexandtabler::clearCharMappingTable() {
     }
     m_isModified = true;
 }
+
 void hexandtabler::on_actionClearTable_triggered() {
     clearCharMappingTable();
 }
+
 
 void hexandtabler::insertSeries(const QList<QString> &series) {
     if (!m_tableWidget || series.isEmpty()) return;
@@ -1282,5 +1339,253 @@ void hexandtabler::prependToRecentFiles(const QString &filePath) {
 
 void hexandtabler::refreshModelFromArea() {
 }
+
+
+
+// --- Hex Guesser (Brute Force) Implementation ---
+
+QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) const {
+    QMap<QChar, QList<int>> pattern;
+    for (int i = 0; i < text.length(); ++i) {
+        QChar c = text.at(i);
+        if (c.isLetterOrNumber()) {
+            pattern[c].append(i);
+        }
+    }
+    return pattern;
+}
+
+QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> &phrases) {
+    // NOTE: This function is executed in a background thread via QtConcurrent::run
+    // It must not interact with the UI.
+    if (m_fileData.isEmpty()) return QList<QMap<QChar, quint8>>();
+
+    QList<QMap<QChar, quint8>> possibleMappings;
+    const QByteArray data = m_fileData; 
+    
+    for (const KnownPhrase &phrase : phrases) {
+        int phraseLength = phrase.length;
+        
+        if (data.size() < phraseLength) continue;
+
+        for (int i = 0; i <= data.size() - phraseLength; ++i) {
+            
+            QMap<QChar, quint8> currentMapping;
+            bool potentialMatch = true;
+            
+            for (auto it = phrase.pattern.constBegin(); it != phrase.pattern.constEnd(); ++it) {
+                QChar character = it.key();
+                const QList<int> &positions = it.value();
+                
+                // Get the byte value from the first occurrence of the character
+                quint8 byteValue = (quint8)data.at(i + positions.first());
+
+                // Check all other positions of this character for consistency
+                for (int pos : positions) {
+                    if ((quint8)data.at(i + pos) != byteValue) {
+                        potentialMatch = false;
+                        break; 
+                    }
+                }
+                
+                if (!potentialMatch) break;
+
+                // Check for character-to-byte conflict (same character maps to different bytes)
+                if (currentMapping.contains(character) && currentMapping.value(character) != byteValue) {
+                    potentialMatch = false;
+                    break;
+                }
+                
+                // Check for byte-to-character conflict (different characters map to the same byte)
+                bool byteConflict = false;
+                for (quint8 existingByte : currentMapping.values()) {
+                    if (existingByte == byteValue && currentMapping.key(existingByte) != character) {
+                        byteConflict = true; 
+                        break;
+                    }
+                }
+                if (byteConflict) {
+                     potentialMatch = false;
+                     break;
+                }
+
+                currentMapping.insert(character, byteValue);
+            }
+
+            if (potentialMatch && !currentMapping.isEmpty()) {
+                if (!possibleMappings.contains(currentMapping)) {
+                    possibleMappings.append(currentMapping);
+                }
+            }
+        }
+    }
+    
+    return possibleMappings;
+}
+
+void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
+    if (!m_tableWidget) return;
+
+    QSignalBlocker blocker(m_tableWidget);
+    
+    // Clear existing mappings that will be overwritten (set to '.')
+    for (int i = 0; i < 256; ++i) {
+        if (mapping.values().contains(i)) {
+             m_charMap[i] = ".";
+             QTableWidgetItem *item = m_tableWidget->item(i, 1);
+             if (item) item->setText(".");
+        }
+    }
+
+    // Apply the new mapping
+    for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
+        QChar character = it.key();
+        quint8 byteValue = it.value();
+        
+        m_charMap[byteValue] = QString(character);
+        QTableWidgetItem *item = m_tableWidget->item(byteValue, 1);
+        if (item) {
+            item->setText(QString(character));
+        }
+    }
+
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
+}
+
+void hexandtabler::on_actionGuessEncoding_triggered() {
+    
+    if (m_fileData.isEmpty()) {
+        QMessageBox::warning(this, tr("Encoding Guess"), tr("Please load a file first."));
+        return;
+    }
+
+    if (m_guessSearchFuture.isRunning()) {
+        QMessageBox::information(this, tr("Encoding Guess"), tr("A search is already running. Please wait."));
+        return;
+    }
+
+    bool ok;
+    QString input = QInputDialog::getText(this, 
+                                          tr("Known Phrases for Encoding Guess"),
+                                          tr("Enter known phrases (separate with commas or new lines, minimum %1 chars each):").arg(3), 
+                                          QLineEdit::Normal, 
+                                          QString(), 
+                                          &ok);
+
+    if (!ok || input.isEmpty()) {
+        return;
+    }
+    
+    QStringList rawPhrases;
+    if (input.contains('\n')) {
+        rawPhrases = input.split('\n', Qt::SkipEmptyParts);
+    } else {
+        rawPhrases = input.split(',', Qt::SkipEmptyParts);
+    }
+    
+    QList<KnownPhrase> searchPhrases;
+
+    for (const QString &text : rawPhrases) {
+        QString cleanText = text.trimmed().toUpper(); 
+        if (cleanText.isEmpty() || cleanText.length() < 3) continue;
+
+        KnownPhrase kp;
+        kp.text = cleanText;
+        kp.length = cleanText.length();
+        kp.pattern = calculatePattern(cleanText);
+        searchPhrases.append(kp);
+    }
+
+    if (searchPhrases.isEmpty()) {
+        QMessageBox::warning(this, tr("Encoding Guess"), tr("Please enter valid known phrases (minimum %1 characters each).").arg(3));
+        return;
+    }
+    
+    // Execute the guess logic asynchronously
+    m_guessSearchFuture = QtConcurrent::run(this, &hexandtabler::guessEncoding, searchPhrases);
+
+    // Connect the result to a QFutureWatcher to ensure processing on the main thread
+    QFutureWatcher<QList<QMap<QChar, quint8>>> *watcher = new QFutureWatcher<QList<QMap<QChar, quint8>>>(this);
+    connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, this, &hexandtabler::handleGuessEncodingFinished);
+    connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, watcher, &QObject::deleteLater); 
+    watcher->setFuture(m_guessSearchFuture);
+
+    // Non-blocking notification
+    QMessageBox::information(this, tr("Encoding Guess"), tr("Search started in the background. The selection window will appear when the results are ready."));
+}
+
+void hexandtabler::handleGuessEncodingFinished() {
+    QList<QMap<QChar, quint8>> results = m_guessSearchFuture.result();
+    if (results.isEmpty()) {
+        QMessageBox::information(this, tr("Encoding Guess Result"),
+            tr("No patterns matching the known phrases were found."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Select Encoding Map"));
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
+    QLabel *label = new QLabel(
+        tr("Found %n potential encoding(s). Select one to apply, or use 'Apply All'.", "", results.size()));
+    mainLayout->addWidget(label);
+
+    QListWidget *listWidget = new QListWidget(&dialog);
+    listWidget->setFont(QFont("Monospace", 10));
+    listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    mainLayout->addWidget(listWidget);
+
+    for (int i = 0; i < results.size(); ++i) {
+        const QMap<QChar, quint8> &mapping = results.at(i);
+        QString displayString;
+        for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
+            displayString += QString("'%1': 0x%2, ").arg(it.key()).arg(it.value(), 2, 16, QChar('0'));
+        }
+        if (!displayString.isEmpty())
+            displayString.chop(2);
+        QListWidgetItem *item = new QListWidgetItem(
+            QString("Map %1: (%2)").arg(i + 1).arg(displayString),
+            listWidget
+        );
+        item->setData(Qt::UserRole, i);
+    }
+
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    QPushButton *applyAllBtn = buttonBox->addButton(tr("Apply All"), QDialogButtonBox::ActionRole);
+    mainLayout->addWidget(buttonBox);
+
+    connect(listWidget, &QListWidget::itemDoubleClicked, [&dialog](QListWidgetItem *) {
+        dialog.accept();
+    });
+    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(applyAllBtn, &QPushButton::clicked, [&]() {
+        for (const auto &mapping : results) {
+            addFoundMappingToTable(mapping);
+        }
+        QMessageBox::information(&dialog, tr("Encoding Applied"),
+                                 tr("All mappings applied successfully."));
+        dialog.accept();
+    });
+
+    if (dialog.exec() == QDialog::Accepted) {
+        QList<QListWidgetItem*> selectedItems = listWidget->selectedItems();
+        if (selectedItems.isEmpty()) {
+            addFoundMappingToTable(results.first());
+            return; 
+        }
+        for (QListWidgetItem *selectedItem : selectedItems) {
+            int mapIndex = selectedItem->data(Qt::UserRole).toInt();
+            if (mapIndex >= 0 && mapIndex < results.size()) {
+                addFoundMappingToTable(results.at(mapIndex));
+            }
+        }
+        QMessageBox::information(this, tr("Encoding Applied"),
+                                 tr("Selected map(s) applied successfully."));
+    }
+}
+
 
 #include "hexandtabler.moc"

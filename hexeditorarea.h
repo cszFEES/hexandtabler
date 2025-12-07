@@ -28,6 +28,7 @@ public:
     void updateViewMetrics();
     
     int cursorPosition() const { return m_cursorPos; }
+    void setCursorPosition(int newPos); // Ahora es public para acceso desde hexandtabler.cpp
     void setSelection(int startPos, int endPos);        
     
     int selectionStart() const { return m_selectionStart; } 
@@ -73,12 +74,12 @@ private:
     int m_currentNibbleIndex = 0;
 
     void calculateMetrics(); 
-    void setCursorPosition(int newPos); 
-    void clearSelection();
-
+    void clearSelection(); // <<< Declaración de función
+    
+    // <<< Declaraciones de funciones de manejo de entrada
     void handleAsciiInput(const QString &text); 
-    void handleHexInput(const QString &text);
-    void handleDelete();
+    void handleHexInput(const QString &text); 
+    void handleDelete(); 
 };
 
 #endif

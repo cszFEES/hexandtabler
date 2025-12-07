@@ -109,7 +109,7 @@ void HexEditorArea::changeEvent(QEvent *event) {
 void HexEditorArea::setHexData(const QByteArray &data) {
     m_data = data;
     setCursorPosition(0); 
-    clearSelection();
+    clearSelection(); // <<< Corregido
     updateViewMetrics();
     viewport()->update();
 }
@@ -149,13 +149,13 @@ void HexEditorArea::setSelection(int startPos, int endPos) {
     m_selectionEnd = endPos;
     
     if (m_selectionStart == m_selectionEnd) {
-        clearSelection(); 
+        clearSelection(); // <<< Corregido
     }
     
     viewport()->update();
 }
 
-void HexEditorArea::clearSelection() {
+void HexEditorArea::clearSelection() { // <<< Definición de función
     m_selectionStart = -1;
     m_selectionEnd = -1;
     m_selectionAnchor = -1;
@@ -270,7 +270,7 @@ void HexEditorArea::pasteFromClipboard() {
             m_data[startByte + i] = dataToPaste.at(i);
         }
         setCursorPosition(m_selectionEnd);
-        clearSelection();
+        clearSelection(); // <<< Corregido
     } else {
         int insertByte = m_cursorPos / 2;
         int pasteSize = dataToPaste.size();
@@ -367,7 +367,7 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
     }
 }
 
-void HexEditorArea::handleAsciiInput(const QString &text) {
+void HexEditorArea::handleAsciiInput(const QString &text) { // <<< Definición de función
     if (text.isEmpty()) return;
 
     QChar inputChar = text.at(0);
@@ -391,7 +391,7 @@ void HexEditorArea::handleAsciiInput(const QString &text) {
     }
 }
 
-void HexEditorArea::handleHexInput(const QString &text) {
+void HexEditorArea::handleHexInput(const QString &text) { // <<< Definición de función
     if (text.isEmpty()) return;
 
     QChar inputChar = text.at(0);
@@ -434,7 +434,7 @@ void HexEditorArea::handleHexInput(const QString &text) {
     }
 }
 
-void HexEditorArea::handleDelete() {
+void HexEditorArea::handleDelete() { // <<< Definición de función
     if (m_cursorPos > 0) {
         setCursorPosition(m_cursorPos - 2); 
         int byteIndex = m_cursorPos / 2;
@@ -452,7 +452,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
     bool moved = false;
     
     if (!shiftIsHeld && event->key() != Qt::Key_Control) {
-        clearSelection(); 
+        clearSelection(); // <<< Corregido
     }
     
     
@@ -523,7 +523,7 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
             break;
         }
         case Qt::Key_Backspace:
-            handleDelete(); 
+            handleDelete(); // <<< Corregido
             return;
         case Qt::Key_Delete:
             if (m_cursorPos / 2 < m_data.size()) {
@@ -565,10 +565,10 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
     QString text = event->text();
     if (!text.isEmpty()) {
         if (m_editMode == AsciiMode) {
-            handleAsciiInput(text); 
+            handleAsciiInput(text); // <<< Corregido
             return;
         } else if (m_editMode == HexMode) {
-            handleHexInput(text);
+            handleHexInput(text); // <<< Corregido
             return;
         }
     }
@@ -621,7 +621,7 @@ void HexEditorArea::mousePressEvent(QMouseEvent *event) {
             
             if (!(event->modifiers() & Qt::ShiftModifier)) {
                 
-                clearSelection(); 
+                clearSelection(); // <<< Corregido
                 
                 
                 m_selectionAnchor = newPos;  
@@ -695,7 +695,7 @@ void HexEditorArea::mouseReleaseEvent(QMouseEvent *event) {
         
         
         if (m_selectionStart == m_selectionEnd) {
-             clearSelection();
+             clearSelection(); // <<< Corregido
         }
     }
     QAbstractScrollArea::mouseReleaseEvent(event);
