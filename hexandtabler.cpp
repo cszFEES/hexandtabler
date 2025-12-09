@@ -230,7 +230,6 @@ hexandtabler::hexandtabler(QWidget *parent) :
     setWindowIcon(QIcon(":/icon.png"));
     
     m_tableWidget = new QTableWidget(this); 
-    // Título restaurado a "Conversion Table"
     m_tableDock = new QDockWidget(tr("Conversion Table"), this);
     
     m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); 
@@ -422,7 +421,7 @@ void hexandtabler::loadFile(const QString &filePath) {
     if (m_hexEditorArea) {
         m_hexEditorArea->setHexData(m_fileData);
         m_hexEditorArea->goToOffset(0); 
-        m_hexEditorArea->setSelection(-1, -1); // Clear selection
+        m_hexEditorArea->setSelection(-1, -1); 
     }
     
     m_currentFilePath = filePath;
@@ -524,7 +523,6 @@ void hexandtabler::on_actionGoTo_triggered() {
 void hexandtabler::pushUndoState() {
     if (!m_hexEditorArea) return;
     
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState currentState;
     currentState.data = m_hexEditorArea->hexData();
     currentState.cursorPos = m_hexEditorArea->cursorPosition();
@@ -556,7 +554,6 @@ void hexandtabler::updateUndoRedoActions() {
 void hexandtabler::on_actionUndo_triggered() {
     if (!m_hexEditorArea || m_undoStack.size() <= 1) return;
     
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState currentState = m_undoStack.takeLast();
     m_redoStack.append(currentState);
     
@@ -565,7 +562,6 @@ void hexandtabler::on_actionUndo_triggered() {
     m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
     
-    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
     m_hexEditorArea->setCursorPosition(newState.cursorPos); 
     m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
@@ -576,14 +572,12 @@ void hexandtabler::on_actionUndo_triggered() {
 void hexandtabler::on_actionRedo_triggered() {
     if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
     
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState newState = m_redoStack.takeLast();
     m_undoStack.append(newState);
     
     m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
     
-    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
     m_hexEditorArea->setCursorPosition(newState.cursorPos);
     m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
@@ -1342,8 +1336,6 @@ void hexandtabler::refreshModelFromArea() {
 
 
 
-// --- Hex Guesser (Brute Force) Implementation ---
-
 QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) const {
     QMap<QChar, QList<int>> pattern;
     for (int i = 0; i < text.length(); ++i) {
@@ -1356,8 +1348,6 @@ QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) cons
 }
 
 QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> &phrases) {
-    // NOTE: This function is executed in a background thread via QtConcurrent::run
-    // It must not interact with the UI.
     if (m_fileData.isEmpty()) return QList<QMap<QChar, quint8>>();
 
     QList<QMap<QChar, quint8>> possibleMappings;
@@ -1377,10 +1367,8 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
                 QChar character = it.key();
                 const QList<int> &positions = it.value();
                 
-                // Get the byte value from the first occurrence of the character
                 quint8 byteValue = (quint8)data.at(i + positions.first());
 
-                // Check all other positions of this character for consistency
                 for (int pos : positions) {
                     if ((quint8)data.at(i + pos) != byteValue) {
                         potentialMatch = false;
@@ -1390,13 +1378,11 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
                 
                 if (!potentialMatch) break;
 
-                // Check for character-to-byte conflict (same character maps to different bytes)
                 if (currentMapping.contains(character) && currentMapping.value(character) != byteValue) {
                     potentialMatch = false;
                     break;
                 }
                 
-                // Check for byte-to-character conflict (different characters map to the same byte)
                 bool byteConflict = false;
                 for (quint8 existingByte : currentMapping.values()) {
                     if (existingByte == byteValue && currentMapping.key(existingByte) != character) {
@@ -1423,35 +1409,74 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
     return possibleMappings;
 }
 
-void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
-    if (!m_tableWidget) return;
-
-    QSignalBlocker blocker(m_tableWidget);
-    
-    // Clear existing mappings that will be overwritten (set to '.')
-    for (int i = 0; i < 256; ++i) {
-        if (mapping.values().contains(i)) {
-             m_charMap[i] = ".";
-             QTableWidgetItem *item = m_tableWidget->item(i, 1);
-             if (item) item->setText(".");
+void hexandtabler::inferNeighboringMappings(const QMap<QChar, quint8> &newlyAddedMapping)
+{
+    if (newlyAddedMapping.size() < 2) return;
+    QMap<int, int> byteDiffCounts;
+    QList<QChar> chars = newlyAddedMapping.keys();
+    std::sort(chars.begin(), chars.end());
+    for (int i = 0; i < chars.size() - 1; ++i) {
+        QChar char1 = chars.at(i);
+        QChar char2 = chars.at(i + 1);
+        if (char2.unicode() == char1.unicode() + 1) {
+            quint8 byte1 = newlyAddedMapping.value(char1);
+            quint8 byte2 = newlyAddedMapping.value(char2);
+            int byteDiff = (int)byte2 - (int)byte1;
+            byteDiffCounts[byteDiff]++;
         }
     }
+    if (byteDiffCounts.isEmpty()) return;
+    int maxCount = 0;
+    int mostCommonByteDiff = 0;
+    for (auto it = byteDiffCounts.constBegin(); it != byteDiffCounts.constEnd(); ++it) {
+        if (it.value() > maxCount) {
+            maxCount = it.value();
+            mostCommonByteDiff = it.key();
+        }
+    }
+    QSignalBlocker blocker(m_tableWidget); 
+    for (const QChar &baseChar : newlyAddedMapping.keys()) {
+        quint8 baseByte = newlyAddedMapping.value(baseChar);
+        for (int charOffset = -5; charOffset <= 5; ++charOffset) {
+            if (charOffset == 0) continue; 
+            QChar inferredChar = QChar(baseChar.unicode() + charOffset);
+            int inferredByteInt = (int)baseByte + (mostCommonByteDiff * charOffset);
+            if (inferredByteInt < 0 || inferredByteInt > 255) continue;
+            if (!inferredChar.isPrint()) continue; 
+            quint8 inferredByte = (quint8)inferredByteInt;
+            if (m_charMap[inferredByte].isEmpty() || m_charMap[inferredByte] == ".") {
+                if (newlyAddedMapping.contains(inferredChar)) continue;
+                m_charMap[inferredByte] = inferredChar;
+                QTableWidgetItem *item = m_tableWidget->item(inferredByte, 1);
+                if (!item) {
+                    item = new QTableWidgetItem(inferredChar);
+                    m_tableWidget->setItem(inferredByte, 1, item);
+                } else {
+                    item->setText(inferredChar);
+                }
+            }
+        }
+    }
+}
 
-    // Apply the new mapping
+void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping)
+{
+    QSignalBlocker blocker(m_tableWidget); 
     for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
-        QChar character = it.key();
         quint8 byteValue = it.value();
-        
-        m_charMap[byteValue] = QString(character);
+        QString character = it.key();
+        m_charMap[byteValue] = character;
         QTableWidgetItem *item = m_tableWidget->item(byteValue, 1);
-        if (item) {
-            item->setText(QString(character));
+        if (!item) {
+            item = new QTableWidgetItem(character);
+            m_tableWidget->setItem(byteValue, 1, item);
+        } else {
+            item->setText(character);
         }
     }
-
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
-    }
+    inferNeighboringMappings(mapping);
+    m_isModified = true;
+    m_hexEditorArea->setCharMapping(m_charMap); 
 }
 
 void hexandtabler::on_actionGuessEncoding_triggered() {
@@ -1488,7 +1513,7 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
     QList<KnownPhrase> searchPhrases;
 
     for (const QString &text : rawPhrases) {
-        QString cleanText = text.trimmed().toUpper(); 
+        QString cleanText = text.trimmed(); // <--- CORRECCIÓN: Se eliminó .toUpper()
         if (cleanText.isEmpty() || cleanText.length() < 3) continue;
 
         KnownPhrase kp;
@@ -1503,16 +1528,13 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
     
-    // Execute the guess logic asynchronously
     m_guessSearchFuture = QtConcurrent::run(this, &hexandtabler::guessEncoding, searchPhrases);
 
-    // Connect the result to a QFutureWatcher to ensure processing on the main thread
     QFutureWatcher<QList<QMap<QChar, quint8>>> *watcher = new QFutureWatcher<QList<QMap<QChar, quint8>>>(this);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, this, &hexandtabler::handleGuessEncodingFinished);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, watcher, &QObject::deleteLater); 
     watcher->setFuture(m_guessSearchFuture);
 
-    // Non-blocking notification
     QMessageBox::information(this, tr("Encoding Guess"), tr("Search started in the background. The selection window will appear when the results are ready."));
 }
 
