@@ -15,6 +15,8 @@
 #include <QKeySequence>
 #include <QStyleOptionSlider>
 
+
+
 HexEditorArea::HexEditorArea(QWidget *parent)
     : QAbstractScrollArea(parent),
       m_bytesPerLine(16),

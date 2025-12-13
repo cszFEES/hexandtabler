@@ -83,7 +83,6 @@ private slots:
     void handleTableItemChanged(QTableWidgetItem *item);
     void handleDataEdited(); 
 
-    // Slots para el Hex Guesser
     void on_actionGuessEncoding_triggered();
     void handleGuessEncodingFinished();
 
@@ -102,10 +101,8 @@ private:
     // Hex Guesser
     QFuture<QList<QMap<QChar, quint8>>> m_guessSearchFuture; 
     QMap<QChar, QList<int>> calculatePattern(const QString &text) const;
-    QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases);
-    void addFoundMappingToTable(const QMap<QChar, quint8> &mapping); // <-- ÚNICA DECLARACIÓN
-
-    void inferNeighboringMappings(const QMap<QChar, quint8> &newlyAddedMapping); // <-- FUNCIÓN NUEVA
+    QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases, quint64 startOffset,quint64 endOffset);
+    void addFoundMappingToTable(const QMap<QChar, quint8> &mapping);
     
     struct EditorState {
         QByteArray data;
@@ -122,8 +119,6 @@ private:
     void findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards);
     void replaceOne();
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
-
-    // [Líneas eliminadas que contenían la declaración duplicada addFoundMappingToTable]
     
     void findNextRelative(const QString &searchText, bool wrap, bool backwards);
     QVector<qint16> calculateRelativeOffsets(const QString &input) const; 

@@ -230,6 +230,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
     setWindowIcon(QIcon(":/icon.png"));
     
     m_tableWidget = new QTableWidget(this); 
+    // Título restaurado a "Conversion Table"
     m_tableDock = new QDockWidget(tr("Conversion Table"), this);
     
     m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); 
@@ -421,7 +422,7 @@ void hexandtabler::loadFile(const QString &filePath) {
     if (m_hexEditorArea) {
         m_hexEditorArea->setHexData(m_fileData);
         m_hexEditorArea->goToOffset(0); 
-        m_hexEditorArea->setSelection(-1, -1); 
+        m_hexEditorArea->setSelection(-1, -1); // Clear selection
     }
     
     m_currentFilePath = filePath;
@@ -523,6 +524,7 @@ void hexandtabler::on_actionGoTo_triggered() {
 void hexandtabler::pushUndoState() {
     if (!m_hexEditorArea) return;
     
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState currentState;
     currentState.data = m_hexEditorArea->hexData();
     currentState.cursorPos = m_hexEditorArea->cursorPosition();
@@ -554,6 +556,7 @@ void hexandtabler::updateUndoRedoActions() {
 void hexandtabler::on_actionUndo_triggered() {
     if (!m_hexEditorArea || m_undoStack.size() <= 1) return;
     
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState currentState = m_undoStack.takeLast();
     m_redoStack.append(currentState);
     
@@ -562,6 +565,7 @@ void hexandtabler::on_actionUndo_triggered() {
     m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
     
+    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
     m_hexEditorArea->setCursorPosition(newState.cursorPos); 
     m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
@@ -572,12 +576,14 @@ void hexandtabler::on_actionUndo_triggered() {
 void hexandtabler::on_actionRedo_triggered() {
     if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
     
+    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
     EditorState newState = m_redoStack.takeLast();
     m_undoStack.append(newState);
     
     m_fileData = newState.data;
     m_hexEditorArea->setHexData(m_fileData);
     
+    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
     m_hexEditorArea->setCursorPosition(newState.cursorPos);
     m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
     
@@ -1336,6 +1342,8 @@ void hexandtabler::refreshModelFromArea() {
 
 
 
+// --- Hex Guesser (Brute Force) Implementation ---
+
 QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) const {
     QMap<QChar, QList<int>> pattern;
     for (int i = 0; i < text.length(); ++i) {
@@ -1347,60 +1355,94 @@ QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) cons
     return pattern;
 }
 
-QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> &phrases) {
+
+QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> &phrases,
+                                                     quint64 startOffset, 
+                                                     quint64 endOffset) { // <- 'backwards' removed
+    // NOTE: This function is executed in a background thread via QtConcurrent::run
+    // It must not interact with the UI.
     if (m_fileData.isEmpty()) return QList<QMap<QChar, quint8>>();
 
     QList<QMap<QChar, quint8>> possibleMappings;
     const QByteArray data = m_fileData; 
     
+    // Convert to qint64 for safe use with QByteArray::size() and loop counters
+    qint64 dataSize = data.size(); 
+    qint64 start = (qint64)startOffset;
+    qint64 end = (qint64)endOffset; // End offset is the last byte *index* to check (inclusive)
+    
+    // Sanity check of limits
+    start = std::max((qint64)0, start);
+    end = std::min(dataSize - 1, end); 
+    
+    if (start > end) return QList<QMap<QChar, quint8>>(); // Invalid range
+    
+    // Core logic to check for a potential match and build the mapping for a given starting index 'i'
+    // This function is defined inside guessEncoding to capture the 'data' QByteArray by reference efficiently.
+    auto checkMatchAndMap = [&](qint64 i, const KnownPhrase &phrase) -> QMap<QChar, quint8> {
+        QMap<QChar, quint8> currentMapping;
+        bool potentialMatch = true;
+        
+        for (auto it = phrase.pattern.constBegin(); it != phrase.pattern.constEnd(); ++it) {
+            QChar character = it.key();
+            const QList<int> &positions = it.value();
+            
+            // Get the byte value from the first occurrence of the character
+            quint8 byteValue = (quint8)data.at(i + positions.first());
+
+            // Check all other positions of this character for consistency (A-A check)
+            for (int pos : positions) {
+                if ((quint8)data.at(i + pos) != byteValue) {
+                    potentialMatch = false;
+                    break; 
+                }
+            }
+            
+            if (!potentialMatch) break;
+
+            // Check for character-to-byte conflict (char 'A' maps to 0x41, then to 0x42)
+            if (currentMapping.contains(character) && currentMapping.value(character) != byteValue) {
+                potentialMatch = false;
+                break;
+            }
+            
+            // Check for byte-to-character conflict (0x41 maps to 'A', then 0x41 maps to 'B')
+            bool byteConflict = false;
+            for (quint8 existingByte : currentMapping.values()) {
+                if (existingByte == byteValue && currentMapping.key(existingByte) != character) {
+                    byteConflict = true; 
+                    break;
+                }
+            }
+            if (byteConflict) {
+                 potentialMatch = false;
+                 break;
+            }
+
+            currentMapping.insert(character, byteValue);
+        }
+        
+        if (potentialMatch && !currentMapping.isEmpty()) {
+            return currentMapping;
+        }
+        return QMap<QChar, quint8>(); // Return empty map if no match
+    };
+
     for (const KnownPhrase &phrase : phrases) {
         int phraseLength = phrase.length;
         
-        if (data.size() < phraseLength) continue;
+        if (end - start + 1 < phraseLength) continue; // Range is too small for the phrase
 
-        for (int i = 0; i <= data.size() - phraseLength; ++i) {
-            
-            QMap<QChar, quint8> currentMapping;
-            bool potentialMatch = true;
-            
-            for (auto it = phrase.pattern.constBegin(); it != phrase.pattern.constEnd(); ++it) {
-                QChar character = it.key();
-                const QList<int> &positions = it.value();
-                
-                quint8 byteValue = (quint8)data.at(i + positions.first());
+        // Forward Search: i goes from startOffset to the last possible start index
+        qint64 max_i = end - phraseLength + 1;
+        // Ensure max_i is also within file bounds
+        max_i = std::min(max_i, dataSize - phraseLength); 
 
-                for (int pos : positions) {
-                    if ((quint8)data.at(i + pos) != byteValue) {
-                        potentialMatch = false;
-                        break; 
-                    }
-                }
-                
-                if (!potentialMatch) break;
-
-                if (currentMapping.contains(character) && currentMapping.value(character) != byteValue) {
-                    potentialMatch = false;
-                    break;
-                }
-                
-                bool byteConflict = false;
-                for (quint8 existingByte : currentMapping.values()) {
-                    if (existingByte == byteValue && currentMapping.key(existingByte) != character) {
-                        byteConflict = true; 
-                        break;
-                    }
-                }
-                if (byteConflict) {
-                     potentialMatch = false;
-                     break;
-                }
-
-                currentMapping.insert(character, byteValue);
-            }
-
-            if (potentialMatch && !currentMapping.isEmpty()) {
-                if (!possibleMappings.contains(currentMapping)) {
-                    possibleMappings.append(currentMapping);
+        for (qint64 i = start; i <= max_i; ++i) {
+            QMap<QChar, quint8> mapping = checkMatchAndMap(i, phrase);
+            if (!mapping.isEmpty()) {
+                if (!possibleMappings.contains(mapping)) {
+                    possibleMappings.append(mapping);
                 }
             }
         }
@@ -1409,74 +1451,35 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
     return possibleMappings;
 }
 
-void hexandtabler::inferNeighboringMappings(const QMap<QChar, quint8> &newlyAddedMapping)
-{
-    if (newlyAddedMapping.size() < 2) return;
-    QMap<int, int> byteDiffCounts;
-    QList<QChar> chars = newlyAddedMapping.keys();
-    std::sort(chars.begin(), chars.end());
-    for (int i = 0; i < chars.size() - 1; ++i) {
-        QChar char1 = chars.at(i);
-        QChar char2 = chars.at(i + 1);
-        if (char2.unicode() == char1.unicode() + 1) {
-            quint8 byte1 = newlyAddedMapping.value(char1);
-            quint8 byte2 = newlyAddedMapping.value(char2);
-            int byteDiff = (int)byte2 - (int)byte1;
-            byteDiffCounts[byteDiff]++;
-        }
-    }
-    if (byteDiffCounts.isEmpty()) return;
-    int maxCount = 0;
-    int mostCommonByteDiff = 0;
-    for (auto it = byteDiffCounts.constBegin(); it != byteDiffCounts.constEnd(); ++it) {
-        if (it.value() > maxCount) {
-            maxCount = it.value();
-            mostCommonByteDiff = it.key();
-        }
-    }
-    QSignalBlocker blocker(m_tableWidget); 
-    for (const QChar &baseChar : newlyAddedMapping.keys()) {
-        quint8 baseByte = newlyAddedMapping.value(baseChar);
-        for (int charOffset = -5; charOffset <= 5; ++charOffset) {
-            if (charOffset == 0) continue; 
-            QChar inferredChar = QChar(baseChar.unicode() + charOffset);
-            int inferredByteInt = (int)baseByte + (mostCommonByteDiff * charOffset);
-            if (inferredByteInt < 0 || inferredByteInt > 255) continue;
-            if (!inferredChar.isPrint()) continue; 
-            quint8 inferredByte = (quint8)inferredByteInt;
-            if (m_charMap[inferredByte].isEmpty() || m_charMap[inferredByte] == ".") {
-                if (newlyAddedMapping.contains(inferredChar)) continue;
-                m_charMap[inferredByte] = inferredChar;
-                QTableWidgetItem *item = m_tableWidget->item(inferredByte, 1);
-                if (!item) {
-                    item = new QTableWidgetItem(inferredChar);
-                    m_tableWidget->setItem(inferredByte, 1, item);
-                } else {
-                    item->setText(inferredChar);
-                }
-            }
-        }
-    }
-}
+void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
+    if (!m_tableWidget) return;
 
-void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping)
-{
-    QSignalBlocker blocker(m_tableWidget); 
-    for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
-        quint8 byteValue = it.value();
-        QString character = it.key();
-        m_charMap[byteValue] = character;
-        QTableWidgetItem *item = m_tableWidget->item(byteValue, 1);
-        if (!item) {
-            item = new QTableWidgetItem(character);
-            m_tableWidget->setItem(byteValue, 1, item);
-        } else {
-            item->setText(character);
+    QSignalBlocker blocker(m_tableWidget);
+    
+    // Clear existing mappings that will be overwritten (set to '.')
+    for (int i = 0; i < 256; ++i) {
+        if (mapping.values().contains(i)) {
+             m_charMap[i] = ".";
+             QTableWidgetItem *item = m_tableWidget->item(i, 1);
+             if (item) item->setText(".");
         }
     }
-    inferNeighboringMappings(mapping);
-    m_isModified = true;
-    m_hexEditorArea->setCharMapping(m_charMap); 
+
+    // Apply the new mapping
+    for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
+        QChar character = it.key();
+        quint8 byteValue = it.value();
+        
+        m_charMap[byteValue] = QString(character);
+        QTableWidgetItem *item = m_tableWidget->item(byteValue, 1);
+        if (item) {
+            item->setText(QString(character));
+        }
+    }
+
+    if (m_hexEditorArea) {
+        m_hexEditorArea->setCharMapping(m_charMap);
+    }
 }
 
 void hexandtabler::on_actionGuessEncoding_triggered() {
@@ -1491,29 +1494,65 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
 
-    bool ok;
-    QString input = QInputDialog::getText(this, 
-                                          tr("Known Phrases for Encoding Guess"),
-                                          tr("Enter known phrases (separate with commas or new lines, minimum %1 chars each):").arg(3), 
-                                          QLineEdit::Normal, 
-                                          QString(), 
-                                          &ok);
+    // 1. Create the configuration dialog
+    QDialog configDialog(this);
+    configDialog.setWindowTitle(tr("Configure Encoding Guess"));
 
-    if (!ok || input.isEmpty()) {
+    QVBoxLayout *mainLayout = new QVBoxLayout(&configDialog);
+
+    // Known Phrases Input (Now separated ONLY by new lines)
+    QTextEdit *phrasesEdit = new QTextEdit;
+    phrasesEdit->setPlaceholderText(tr("Enter known phrases (one per line, minimum %1 chars each):").arg(3));
+    
+    // Search Configuration Input
+    // Default end offset is the size of the file in hex
+    qint64 fileSize = m_fileData.size();
+    QString maxOffsetHex = QString::number(fileSize > 0 ? fileSize - 1 : 0, 16).toUpper(); 
+    QLineEdit *startOffsetEdit = new QLineEdit("0");
+    QLineEdit *endOffsetEdit = new QLineEdit(maxOffsetHex);
+    // Removed QCheckBox *backwardsCheck
+    
+    QFormLayout *formLayout = new QFormLayout;
+    formLayout->addRow(tr("Known Phrases:"), phrasesEdit);
+    formLayout->addRow(tr("Start Offset (Hex):"), startOffsetEdit);
+    formLayout->addRow(tr("End Offset (Hex, inclusive):"), endOffsetEdit); // User provides the last byte index
+    // Removed 'Direction' row
+
+    mainLayout->addLayout(formLayout);
+
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(buttonBox, &QDialogButtonBox::accepted, &configDialog, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::rejected, &configDialog, &QDialog::reject);
+    mainLayout->addWidget(buttonBox);
+
+    // 2. Execute the dialog
+    if (configDialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    // 3. Process user inputs and validate
+    QString input = phrasesEdit->toPlainText();
+    bool startOk, endOk;
+    // Parse offsets as hex
+    quint64 startOffset = startOffsetEdit->text().toULongLong(&startOk, 16);
+    quint64 endOffset = endOffsetEdit->text().toULongLong(&endOk, 16);
+    
+    // Offset validation
+    // Check if conversion was successful, start <= end, and end is within file bounds.
+    if (!startOk || !endOk || startOffset > endOffset || endOffset >= (quint64)fileSize) {
+        QMessageBox::warning(this, tr("Encoding Guess"), 
+                             tr("Invalid start/end offsets. Please use valid hex values where Start <= End < FileSize (0x%1).")
+                             .arg(QString::number(fileSize, 16).toUpper()));
         return;
     }
     
-    QStringList rawPhrases;
-    if (input.contains('\n')) {
-        rawPhrases = input.split('\n', Qt::SkipEmptyParts);
-    } else {
-        rawPhrases = input.split(',', Qt::SkipEmptyParts);
-    }
+    // Phrase processing: ONLY split by new line
+    QStringList rawPhrases = input.split('\n', Qt::SkipEmptyParts);
     
     QList<KnownPhrase> searchPhrases;
 
     for (const QString &text : rawPhrases) {
-        QString cleanText = text.trimmed(); // <--- CORRECCIÓN: Se eliminó .toUpper()
+        QString cleanText = text.trimmed(); 
         if (cleanText.isEmpty() || cleanText.length() < 3) continue;
 
         KnownPhrase kp;
@@ -1528,15 +1567,24 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
     
-    m_guessSearchFuture = QtConcurrent::run(this, &hexandtabler::guessEncoding, searchPhrases);
+    // 4. Execute the function with the new parameters
+    // Removed 'backwards' argument
+    m_guessSearchFuture = QtConcurrent::run(this, 
+                                            &hexandtabler::guessEncoding, 
+                                            searchPhrases, 
+                                            startOffset, 
+                                            endOffset); 
 
+    // Connect the result to a QFutureWatcher to ensure processing on the main thread
     QFutureWatcher<QList<QMap<QChar, quint8>>> *watcher = new QFutureWatcher<QList<QMap<QChar, quint8>>>(this);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, this, &hexandtabler::handleGuessEncodingFinished);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, watcher, &QObject::deleteLater); 
     watcher->setFuture(m_guessSearchFuture);
 
+    // Non-blocking notification
     QMessageBox::information(this, tr("Encoding Guess"), tr("Search started in the background. The selection window will appear when the results are ready."));
 }
+
 
 void hexandtabler::handleGuessEncodingFinished() {
     QList<QMap<QChar, quint8>> results = m_guessSearchFuture.result();
