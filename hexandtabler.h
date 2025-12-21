@@ -98,7 +98,6 @@ private:
     QString m_currentTablePath; 
     bool m_isModified = false;
 
-    // Hex Guesser
     QFuture<QList<QMap<QChar, quint8>>> m_guessSearchFuture; 
     QMap<QChar, QList<int>> calculatePattern(const QString &text) const;
     QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases, quint64 startOffset,quint64 endOffset);

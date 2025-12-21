@@ -51,6 +51,7 @@ const int MAX_UNDO_STATES = 50;
 const int MIN_CHARS_FOR_RELATIVE_SEARCH = 3; 
 const qint16 WILD_CARD_OFFSET = SHRT_MIN; 
 
+
 class FindReplaceDialog : public QDialog
 {
     Q_OBJECT
@@ -1186,24 +1187,39 @@ void hexandtabler::on_actionInsertLatinLower_triggered() {
     insertSeries(series);
 }
 
-void hexandtabler::on_actionInsertHiragana_triggered() {
-    QList<QString> series;
-    int startCode = 0x3042; 
-    int count = 50; 
-    for (int i = 0; i < count; ++i) {
-        series.append(QString(QChar(startCode + i)));
-    }
-    insertSeries(series);
+
+void hexandtabler::on_actionInsertHiragana_triggered()
+{
+    QStringList hiraganaBasic = {
+        "あ", "い", "う", "え", "お",
+        "か", "き", "く", "け", "こ",
+        "さ", "し", "す", "せ", "そ",
+        "た", "ち", "つ", "て", "と",
+        "な", "ni", "ぬ", "ね", "の",
+        "は", "ひ", "ふ", "へ", "ほ",
+        "ま", "み", "む", "め", "も",
+        "や", "ゆ", "よ",
+        "ら", "り", "る", "れ", "ろ",
+        "わ", "を", "ん"
+    };
+    insertSeries(hiraganaBasic);
 }
 
-void hexandtabler::on_actionInsertKatakana_triggered() {
-    QList<QString> series;
-    int startCode = 0x30A2; 
-    int count = 50; 
-    for (int i = 0; i < count; ++i) {
-        series.append(QString(QChar(startCode + i)));
-    }
-    insertSeries(series);
+void hexandtabler::on_actionInsertKatakana_triggered()
+{
+    QStringList katakanaBasic = {
+        "ア", "イ", "ウ", "エ", "オ",
+        "カ", "キ", "ク", "ケ", "コ",
+        "サ", "シ", "ス", "セ", "ソ",
+        "タ", "チ", "ツ", "テ", "ト",
+        "ナ", "ニ", "ヌ", "ネ", "ノ",
+        "ハ", "ヒ", "フ", "ヘ", "ホ",
+        "マ", "ミ", "ム", "メ", "モ",
+        "ヤ", "ユ", "ヨ",
+        "ラ", "リ", "ル", "レ", "ロ",
+        "ワ", "ヲ", "ン"
+    };
+    insertSeries(katakanaBasic);
 }
 
 void hexandtabler::on_actionInsertCyrillic_triggered() {
