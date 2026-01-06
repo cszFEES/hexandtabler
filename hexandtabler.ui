@@ -98,6 +98,7 @@
      <addaction name="actionInsertHiragana"/>
      <addaction name="actionInsertKatakana"/>
      <addaction name="actionInsertCyrillic"/>
+     <addaction name="actionInsertNumbers19"/>
     </widget>
    </widget>
    <widget class="QMenu" name="menuHelp">
@@ -289,6 +290,12 @@
     <string>Cyrillic (А-Я)</string>
    </property>
   </action>
+  <addaction name="actionInsertNumbers19"/>
+<action name="actionInsertNumbers19">
+ <property name="text">
+  <string>Numbers (1-9)</string>
+ </property>
+</action>
  </widget>
  <customwidgets>
   <customwidget>

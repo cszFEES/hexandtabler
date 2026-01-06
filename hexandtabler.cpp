@@ -1044,7 +1044,6 @@ bool hexandtabler::saveTableFile(const QString &filePath) {
     }
 
     QTextStream out(&file);
-    out << "# Conversion Table File\n";
     
     for (int i = 0; i < 256; ++i) {
         out << QString("%1=%2\n").arg(i, 2, 16, QChar('0')).toUpper().arg(m_charMap[i]);
@@ -1195,7 +1194,7 @@ void hexandtabler::on_actionInsertHiragana_triggered()
         "か", "き", "く", "け", "こ",
         "さ", "し", "す", "せ", "そ",
         "た", "ち", "つ", "て", "と",
-        "な", "ni", "ぬ", "ね", "の",
+        "な", "に", "ぬ", "ね", "の",
         "は", "ひ", "ふ", "へ", "ほ",
         "ま", "み", "む", "め", "も",
         "や", "ゆ", "よ",
@@ -1231,6 +1230,14 @@ void hexandtabler::on_actionInsertCyrillic_triggered() {
         series.append(QString(QChar(i)));
     }
     
+    insertSeries(series);
+}
+
+void hexandtabler::on_actionInsertNumbers19_triggered() {
+    QList<QString> series;
+    for (int i = 1; i <= 9; ++i) {
+        series.append(QString::number(i));
+    }
     insertSeries(series);
 }
 

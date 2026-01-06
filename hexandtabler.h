@@ -78,6 +78,7 @@ private slots:
     void on_actionInsertHiragana_triggered();
     void on_actionInsertKatakana_triggered();
     void on_actionInsertCyrillic_triggered();
+    void on_actionInsertNumbers19_triggered();
     
     void openRecentFile(); 
     void handleTableItemChanged(QTableWidgetItem *item);
