@@ -267,7 +267,7 @@ hexandtabler::hexandtabler(QWidget *parent) :
     m_findReplaceDialog = new FindReplaceDialog(this); 
     
     if (m_hexEditorArea) {
-         connect(m_hexEditorArea, &HexEditorArea::dataChanged, this, &hexandtabler::handleDataEdited);
+         connect(m_hexEditorArea, &HexEditorArea::byteEdited, this, &hexandtabler::handleByteEdited);
     }
     
     if (m_tableWidget) {
@@ -423,14 +423,14 @@ void hexandtabler::loadFile(const QString &filePath) {
     if (m_hexEditorArea) {
         m_hexEditorArea->setHexData(m_fileData);
         m_hexEditorArea->goToOffset(0); 
-        m_hexEditorArea->setSelection(-1, -1); // Clear selection
+        m_hexEditorArea->setSelection(-1, -1); 
     }
     
     m_currentFilePath = filePath;
     m_isModified = false;
+    m_fileData = m_hexEditorArea->hexData();
     m_undoStack.clear();
     m_redoStack.clear();
-    pushUndoState();
     updateUndoRedoActions();
     
     setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(filePath).fileName()));
@@ -505,43 +505,78 @@ void hexandtabler::on_actionZoomOut_triggered() {
 void hexandtabler::on_actionGoTo_triggered() {
     if (!m_hexEditorArea) return;
 
-    bool ok;
-    QString text = QInputDialog::getText(this, tr("Go To Offset"),
-                                         tr("Enter offset in hexadecimal:"), QLineEdit::Normal,
-                                         QString(), &ok);
-    if (ok && !text.isEmpty()) {
-        bool hexOk;
-        quint64 offset = text.toULongLong(&hexOk, 16);
-        
-        if (hexOk) {
-            m_hexEditorArea->goToOffset(offset);
-        } else {
-            QMessageBox::warning(this, tr("Invalid Input"), tr("The input is not a valid hexadecimal number."));
-        }
+    static QString lastOffset = "0";
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Go To Offset"));
+
+    QLabel *label = new QLabel(tr("Enter offset in hexadecimal:"), &dialog);
+    QLineEdit *lineEdit = new QLineEdit(&dialog);
+    lineEdit->setText(lastOffset);
+    lineEdit->selectAll(); 
+
+    QPushButton *okBtn = new QPushButton(tr("OK"), &dialog);
+    QPushButton *cancelBtn = new QPushButton(tr("Cancel"), &dialog);
+    okBtn->setDefault(true);
+
+    QHBoxLayout *btnLayout = new QHBoxLayout;
+    btnLayout->addWidget(okBtn);
+    btnLayout->addWidget(cancelBtn);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(&dialog);
+    mainLayout->addWidget(label);
+    mainLayout->addWidget(lineEdit);
+    mainLayout->addLayout(btnLayout);
+
+    connect(okBtn, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(cancelBtn, &QPushButton::clicked, &dialog, &QDialog::reject);
+    connect(lineEdit, &QLineEdit::returnPressed, &dialog, &QDialog::accept);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    QString text = lineEdit->text().trimmed();
+    if (text.isEmpty()) return;
+
+    bool hexOk;
+    quint64 offset = text.toULongLong(&hexOk, 16);
+
+    if (hexOk) {
+        lastOffset = text; 
+        m_hexEditorArea->goToOffset(offset);
+    } else {
+        QMessageBox::warning(this, tr("Invalid Input"), tr("The input is not a valid hexadecimal number."));
     }
 }
 
 
 void hexandtabler::pushUndoState() {
     if (!m_hexEditorArea) return;
-    
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
-    EditorState currentState;
-    currentState.data = m_hexEditorArea->hexData();
-    currentState.cursorPos = m_hexEditorArea->cursorPosition();
-    currentState.selectionStart = m_hexEditorArea->selectionStart();
-    currentState.selectionEnd = m_hexEditorArea->selectionEnd();
-    
-    if (!m_undoStack.isEmpty() && m_undoStack.last().data == currentState.data) {
-        return; 
+
+    QByteArray newData = m_hexEditorArea->hexData();
+
+    EditorState state;
+    state.cursorPos      = m_hexEditorArea->cursorPosition();
+    state.selectionStart = m_hexEditorArea->selectionStart();
+    state.selectionEnd   = m_hexEditorArea->selectionEnd();
+
+    int minLen = qMin(m_fileData.size(), newData.size());
+    for (int i = 0; i < minLen; ++i) {
+        if ((quint8)m_fileData[i] != (quint8)newData[i]) {
+            state.changes.append(ByteChange(i, (quint8)m_fileData[i], (quint8)newData[i]));
+        }
     }
-    
-    m_undoStack.append(currentState);
-    
-    if (m_undoStack.size() > MAX_UNDO_STATES) {
+    for (int i = minLen; i < newData.size(); ++i) {
+        state.changes.append(ByteChange(i, 0x00, (quint8)newData[i]));
+    }
+
+    if (state.changes.isEmpty()) return;
+
+    m_undoStack.append(state);
+    if (m_undoStack.size() > MAX_UNDO_STATES)
         m_undoStack.removeFirst();
-    }
-    m_redoStack.clear(); 
+
+    m_redoStack.clear();
+    m_fileData = newData;
     updateUndoRedoActions();
 }
 
@@ -555,39 +590,43 @@ void hexandtabler::updateUndoRedoActions() {
 }
 
 void hexandtabler::on_actionUndo_triggered() {
-    if (!m_hexEditorArea || m_undoStack.size() <= 1) return;
-    
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
-    EditorState currentState = m_undoStack.takeLast();
-    m_redoStack.append(currentState);
-    
-    EditorState newState = m_undoStack.last();
-    
-    m_fileData = newState.data;
+    if (!m_hexEditorArea || m_undoStack.isEmpty()) return;
+
+    EditorState state = m_undoStack.takeLast();
+    m_redoStack.append(state);
+
+    QByteArray data = m_hexEditorArea->hexData();
+    for (const ByteChange &c : state.changes) {
+        if (c.offset < data.size())
+            data[(int)c.offset] = (char)c.oldByte;
+    }
+
+    m_fileData = data;
     m_hexEditorArea->setHexData(m_fileData);
-    
-    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
-    m_hexEditorArea->setCursorPosition(newState.cursorPos); 
-    m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
-    
-    m_isModified = true; 
+    m_hexEditorArea->setCursorPosition(state.cursorPos);
+    m_hexEditorArea->setSelection(state.selectionStart, state.selectionEnd);
+
+    m_isModified = true;
     updateUndoRedoActions();
 }
 
 void hexandtabler::on_actionRedo_triggered() {
     if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
-    
-    // USANDO LA ESTRUCTURA DEFINIDA EN EL .H
-    EditorState newState = m_redoStack.takeLast();
-    m_undoStack.append(newState);
-    
-    m_fileData = newState.data;
+
+    EditorState state = m_redoStack.takeLast();
+    m_undoStack.append(state);
+
+    QByteArray data = m_hexEditorArea->hexData();
+    for (const ByteChange &c : state.changes) {
+        if (c.offset < data.size())
+            data[(int)c.offset] = (char)c.newByte;
+    }
+
+    m_fileData = data;
     m_hexEditorArea->setHexData(m_fileData);
-    
-    // RESTAURAR CURSOR Y SELECCIÓN (FIX)
-    m_hexEditorArea->setCursorPosition(newState.cursorPos);
-    m_hexEditorArea->setSelection(newState.selectionStart, newState.selectionEnd);
-    
+    m_hexEditorArea->setCursorPosition(state.cursorPos);
+    m_hexEditorArea->setSelection(state.selectionStart, state.selectionEnd);
+
     m_isModified = true;
     updateUndoRedoActions();
 }
@@ -1005,7 +1044,6 @@ void hexandtabler::on_actionLoadTable_triggered() {
 
     if (loadTableFile(fileName)) {
         m_currentTablePath = fileName;
-        QMessageBox::information(this, tr("Table Loaded"), tr("Conversion table loaded successfully from %1.").arg(QFileInfo(fileName).fileName()));
     } else {
         QMessageBox::critical(this, tr("Error"), tr("Failed to load conversion table from %1.").arg(QFileInfo(fileName).fileName()));
     }
@@ -1070,24 +1108,27 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
     }
     
     while (!in.atEnd()) {
-        QString line = in.readLine().trimmed();
-        if (line.isEmpty() || line.startsWith("#")) continue;
+        QString line = in.readLine();
+        if (line.trimmed().isEmpty() || line.trimmed().startsWith("#")) continue;
 
-        QStringList parts = line.split("=");
-        if (parts.size() == 2) {
-            QString hexCode = parts.at(0).trimmed();
-            QString charStr = parts.at(1).trimmed();
-            
-            bool ok;
-            int byteValue = hexCode.toInt(&ok, 16); 
+        int sepIndex = line.indexOf('=');
+        if (sepIndex == -1) continue;
 
-            if (ok && byteValue >= 0 && byteValue <= 255) {
-                QString displayChar = charStr.left(1); 
-                if (displayChar.isEmpty()) {
-                    displayChar = "."; 
-                }
-                newMap[byteValue] = displayChar;
+        QString hexCode = line.left(sepIndex).trimmed();
+        QString charStr = line.mid(sepIndex + 1);
+
+        while (charStr.endsWith('\n') || charStr.endsWith('\r'))
+            charStr.chop(1);
+
+        bool ok;
+        int byteValue = hexCode.toInt(&ok, 16);
+
+        if (ok && byteValue >= 0 && byteValue <= 255) {
+            QString displayChar = charStr.left(1);
+            if (displayChar.isEmpty()) {
+                displayChar = ".";
             }
+            newMap[byteValue] = displayChar;
         }
     }
     file.close();
@@ -1241,9 +1282,24 @@ void hexandtabler::on_actionInsertNumbers19_triggered() {
     insertSeries(series);
 }
 
-void hexandtabler::handleDataEdited() {
+void hexandtabler::handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByte) {
+    if (offset < m_fileData.size()) {
+        m_fileData[(int)offset] = (char)newByte;
+    }
+
+    EditorState state;
+    state.cursorPos      = m_hexEditorArea->cursorPosition();
+    state.selectionStart = m_hexEditorArea->selectionStart();
+    state.selectionEnd   = m_hexEditorArea->selectionEnd();
+    state.changes.append(ByteChange(offset, oldByte, newByte));
+
+    m_undoStack.append(state);
+    if (m_undoStack.size() > MAX_UNDO_STATES)
+        m_undoStack.removeFirst();
+    m_redoStack.clear();
+
     m_isModified = true;
-    pushUndoState();
+    updateUndoRedoActions();
 }
 
 void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {

@@ -82,7 +82,7 @@ private slots:
     
     void openRecentFile(); 
     void handleTableItemChanged(QTableWidgetItem *item);
-    void handleDataEdited(); 
+    void handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByte);
 
     void on_actionGuessEncoding_triggered();
     void handleGuessEncodingFinished();
@@ -104,15 +104,23 @@ private:
     QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases, quint64 startOffset,quint64 endOffset);
     void addFoundMappingToTable(const QMap<QChar, quint8> &mapping);
     
+    struct ByteChange {
+    qint64 offset;
+    quint8 oldByte;
+    quint8 newByte;
+    ByteChange(qint64 o, quint8 ob, quint8 nb) : offset(o), oldByte(ob), newByte(nb) {}
+};
+
     struct EditorState {
-        QByteArray data;
-        int cursorPos;
-        int selectionStart;
-        int selectionEnd;
+        QList<ByteChange> changes;  // cambios respecto al estado anterior
+        qint64 cursorPos;
+        qint64 selectionStart;
+        qint64 selectionEnd;
     };
     
     QList<EditorState> m_undoStack;
     QList<EditorState> m_redoStack;
+    
 
     QString m_charMap[256]; 
 

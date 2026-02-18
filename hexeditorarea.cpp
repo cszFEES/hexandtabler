@@ -337,9 +337,10 @@ void HexEditorArea::handleAsciiInput(const QString &text) {
     if (byteValue != -1) {
         int byteIndex = (int)(m_cursorPos / 2);
         if (byteIndex < m_data.size()) {
+            quint8 oldByte = (quint8)m_data[byteIndex];
             m_data[byteIndex] = (char)byteValue;
             setCursorPosition(m_cursorPos + 2);
-            emit dataChanged();
+            emit byteEdited(byteIndex, oldByte, (quint8)byteValue);
         }
     }
 }
@@ -349,12 +350,12 @@ void HexEditorArea::handleHexInput(const QString &text) {
     QChar inputChar = text.at(0);
     int hexValue = inputChar.isDigit() ? inputChar.digitValue() : 
                    (inputChar.toLower() >= 'a' && inputChar.toLower() <= 'f' ? inputChar.toLower().unicode() - 'a' + 10 : -1);
-
     if (hexValue < 0 || hexValue > 15) return;
 
     int byteIndex = (int)(m_cursorPos / 2);
     if (byteIndex < m_data.size()) {
-        unsigned char byte = (unsigned char)m_data[byteIndex];
+        quint8 oldByte = (quint8)m_data[byteIndex];
+        unsigned char byte = oldByte;
         if (m_currentNibbleIndex == 0) {
             byte = (byte & 0x0F) | (hexValue << 4);
             m_data[byteIndex] = (char)byte;
@@ -364,19 +365,20 @@ void HexEditorArea::handleHexInput(const QString &text) {
             byte = (byte & 0xF0) | hexValue;
             m_data[byteIndex] = (char)byte;
             setCursorPosition(m_cursorPos + 2);
-            m_currentNibbleIndex = 0; 
+            m_currentNibbleIndex = 0;
+            emit byteEdited(byteIndex, oldByte, (quint8)byte); 
         }
-        emit dataChanged();
     }
 }
 
 void HexEditorArea::handleDelete() {
     if (m_cursorPos > 0) {
-        setCursorPosition(m_cursorPos - 2); 
+        setCursorPosition(m_cursorPos - 2);
         int byteIndex = (int)(m_cursorPos / 2);
         if (byteIndex < m_data.size()) {
+            quint8 oldByte = (quint8)m_data[byteIndex];
             m_data[byteIndex] = 0x00;
-            emit dataChanged();
+            emit byteEdited(byteIndex, oldByte, 0x00);
         }
     }
 }

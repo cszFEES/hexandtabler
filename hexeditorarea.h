@@ -37,6 +37,7 @@ public:
 
 signals:
     void dataChanged();
+    void byteEdited(qint64 offset, quint8 oldByte, quint8 newByte);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
