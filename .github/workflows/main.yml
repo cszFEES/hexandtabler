@@ -1,0 +1,61 @@
+name: Build and Release
+
+on:
+  push:
+     branches: - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up build environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Package artifact
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            tar -czf myproject-linux.tar.gz dist/
+          elif [[ "$RUNNER_OS" == "Windows" ]]; then
+            powershell Compress-Archive -Path dist -DestinationPath myproject-win.zip
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            tar -czf myproject-mac.tar.gz dist/
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-build
+          path: |
+            *.tar.gz
+            *.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
