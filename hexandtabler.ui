@@ -62,17 +62,8 @@
     <addaction name="separator"/>
     <addaction name="actionGoTo"/>
     <addaction name="actionFind"/>
+    <addaction name="actionSearchRelative"/>
     <addaction name="actionReplace"/>
-   </widget>
-   <widget class="QMenu" name="menuOptions">
-    <property name="title">
-     <string>Options</string>
-    </property>
-    <addaction name="separator"/>
-    <addaction name="actionDarkMode"/>
-    <addaction name="separator"/>
-    <addaction name="actionZoomIn"/>
-    <addaction name="actionZoomOut"/>
    </widget>
    <widget class="QMenu" name="menuTable">
     <property name="title">
@@ -88,10 +79,9 @@
     <addaction name="separator"/>
     <addaction name="actionGuessEncoding"/>
     <addaction name="separator"/>
-    <addaction name="menuInsertSeries"/>
     <widget class="QMenu" name="menuInsertSeries">
      <property name="title">
-      <string>Insert a series in the table</string>
+      <string>Insert series</string>
      </property>
      <addaction name="actionInsertLatinUpper"/>
      <addaction name="actionInsertLatinLower"/>
@@ -100,6 +90,16 @@
      <addaction name="actionInsertCyrillic"/>
      <addaction name="actionInsertNumbers19"/>
     </widget>
+    <addaction name="menuInsertSeries"/>
+   </widget>
+   <widget class="QMenu" name="menuOptions">
+    <property name="title">
+     <string>Options</string>
+    </property>
+    <addaction name="actionDarkMode"/>
+    <addaction name="separator"/>
+    <addaction name="actionZoomIn"/>
+    <addaction name="actionZoomOut"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -114,196 +114,107 @@
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
-  <!-- Actions -->
   <action name="actionOpen">
-   <property name="text">
-    <string>Open...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+O</string>
-   </property>
+   <property name="text"><string>Open...</string></property>
+   <property name="shortcut"><string>Ctrl+O</string></property>
   </action>
   <action name="actionSave">
-   <property name="text">
-    <string>Save</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+S</string>
-   </property>
+   <property name="text"><string>Save</string></property>
+   <property name="shortcut"><string>Ctrl+S</string></property>
   </action>
   <action name="actionSaveAs">
-   <property name="text">
-    <string>Save As...</string>
-   </property>
+   <property name="text"><string>Save As...</string></property>
   </action>
   <action name="actionExit">
-   <property name="text">
-    <string>Exit</string>
-   </property>
-  </action>
-  <action name="actionAbout">
-   <property name="text">
-    <string>About</string>
-   </property>
+   <property name="text"><string>Exit</string></property>
   </action>
   <action name="actionUndo">
-   <property name="text">
-    <string>Undo</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+Z</string>
-   </property>
+   <property name="text"><string>Undo</string></property>
+   <property name="shortcut"><string>Ctrl+Z</string></property>
   </action>
   <action name="actionRedo">
-   <property name="text">
-    <string>Redo</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+Y</string>
-   </property>
+   <property name="text"><string>Redo</string></property>
+   <property name="shortcut"><string>Ctrl+Y</string></property>
   </action>
   <action name="actionCopy">
-   <property name="text">
-    <string>Copy</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+C</string>
-   </property>
+   <property name="text"><string>Copy</string></property>
+   <property name="shortcut"><string>Ctrl+C</string></property>
   </action>
   <action name="actionPaste">
-   <property name="text">
-    <string>Paste</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+V</string>
-   </property>
-  </action>
-  <action name="actionFind">
-   <property name="text">
-    <string>Find...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+F</string>
-   </property>
-  </action>
-  <action name="actionReplace">
-   <property name="text">
-    <string>Replace...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+H</string>
-   </property>
-  </action>
-  <action name="actionDarkMode">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Dark Mode</string>
-   </property>
-  </action>
-  <action name="actionZoomIn">
-   <property name="text">
-    <string>Zoom In</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl++</string>
-   </property>
-  </action>
-  <action name="actionZoomOut">
-   <property name="text">
-    <string>Zoom Out</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+-</string>
-   </property>
+   <property name="text"><string>Paste</string></property>
+   <property name="shortcut"><string>Ctrl+V</string></property>
   </action>
   <action name="actionGoTo">
-   <property name="text">
-    <string>Go To Offset...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+G</string>
-   </property>
+   <property name="text"><string>Go To...</string></property>
+   <property name="shortcut"><string>Ctrl+G</string></property>
+  </action>
+  <action name="actionFind">
+   <property name="text"><string>Find...</string></property>
+   <property name="shortcut"><string>Ctrl+F</string></property>
+  </action>
+  <action name="actionSearchRelative">
+   <property name="text"><string>Relative Search...</string></property>
+   <property name="shortcut"><string>Ctrl+R</string></property>
+  </action>
+  <action name="actionReplace">
+   <property name="text"><string>Replace...</string></property>
+   <property name="shortcut"><string>Ctrl+H</string></property>
   </action>
   <action name="actionToggleTable">
-   <property name="checkable">
-    <bool>true</bool>
-   </property>
-   <property name="checked">
-    <bool>true</bool>
-   </property>
-   <property name="text">
-    <string>Toggle Table</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+T</string>
-   </property>
+   <property name="checkable"><bool>true</bool></property>
+   <property name="checked"><bool>true</bool></property>
+   <property name="text"><string>Toggle Table</string></property>
+   <property name="shortcut"><string>Ctrl+T</string></property>
   </action>
   <action name="actionLoadTable">
-   <property name="text">
-    <string>Load Table...</string>
-   </property>
+   <property name="text"><string>Load Table...</string></property>
   </action>
   <action name="actionSaveTable">
-   <property name="text">
-    <string>Save Table</string>
-   </property>
+   <property name="text"><string>Save Table</string></property>
   </action>
   <action name="actionSaveTableAs">
-   <property name="text">
-    <string>Save Table As...</string>
-   </property>
+   <property name="text"><string>Save Table As...</string></property>
   </action>
   <action name="actionClearTable">
-   <property name="text">
-    <string>Clear Table</string>
-   </property>
+   <property name="text"><string>Clear Table</string></property>
   </action>
   <action name="actionGuessEncoding">
-   <property name="text">
-    <string>Guess Encoding (Brute Force)...</string>
-   </property>
+   <property name="text"><string>Guess Encoding...</string></property>
+  </action>
+  <action name="actionDarkMode">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="text"><string>Dark Mode</string></property>
+  </action>
+  <action name="actionZoomIn">
+   <property name="text"><string>Zoom In</string></property>
+   <property name="shortcut"><string>Ctrl++</string></property>
+  </action>
+  <action name="actionZoomOut">
+   <property name="text"><string>Zoom Out</string></property>
+   <property name="shortcut"><string>Ctrl+-</string></property>
+  </action>
+  <action name="actionAbout">
+   <property name="text"><string>About</string></property>
   </action>
   <action name="actionInsertLatinUpper">
-   <property name="text">
-    <string>Latin upper (A-Z)</string>
-   </property>
+   <property name="text"><string>Latin Upper (A-Z)</string></property>
   </action>
   <action name="actionInsertLatinLower">
-   <property name="text">
-    <string>Latin lower (a-z)</string>
-   </property>
+   <property name="text"><string>Latin Lower (a-z)</string></property>
   </action>
   <action name="actionInsertHiragana">
-   <property name="text">
-    <string>Hiragana (あ-)</string>
-   </property>
+   <property name="text"><string>Hiragana</string></property>
   </action>
   <action name="actionInsertKatakana">
-   <property name="text">
-    <string>Katakana (ア-)</string>
-   </property>
+   <property name="text"><string>Katakana</string></property>
   </action>
   <action name="actionInsertCyrillic">
-   <property name="text">
-    <string>Cyrillic (А-Я)</string>
-   </property>
+   <property name="text"><string>Cyrillic</string></property>
   </action>
-  <addaction name="actionInsertNumbers19"/>
-<action name="actionInsertNumbers19">
- <property name="text">
-  <string>Numbers (1-9)</string>
- </property>
-</action>
+  <action name="actionInsertNumbers19">
+   <property name="text"><string>Numbers (1-9)</string></property>
+  </action>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>QTextEdit</class>
-   <extends>QWidget</extends>
-   <header location="global">qtextedit.h</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>

@@ -6,7 +6,7 @@ Hexandtabler is a hexadecimal editor created with C++ and Qt, primarily aimed at
 
 Before compiling the project, make sure you have the following programs installed:
 
-1. **Qt5 Libraries**: Necessary for the graphical interface.
+1. **Qt Libraries**: Necessary for the graphical interface.
 2. **CMake**: Project configuration tool.
 3. **g++**: C++ compiler.
 

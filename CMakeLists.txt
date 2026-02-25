@@ -1,22 +1,23 @@
-cmake_minimum_required(VERSION 3.15) # Actualizado para quitar la advertencia
+cmake_minimum_required(VERSION 3.20)
 project(hexandtabler)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-find_package(Qt5Widgets REQUIRED)
+set(CMAKE_AUTOUIC ON)
 
-qt5_wrap_ui(UI_HEADERS hexandtabler.ui)
+find_package(Qt6 COMPONENTS Widgets Concurrent REQUIRED)
+
 add_executable(hexandtabler 
     main.cpp 
     hexandtabler.cpp 
-    hexeditorarea.cpp 
-    ${UI_HEADERS}
+    hexeditorarea.cpp
+    hexandtabler.ui
 )
 
-target_include_directories(hexandtabler PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_include_directories(hexandtabler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(hexandtabler Qt5::Widgets)
-install(TARGETS hexandtabler
-    RUNTIME DESTINATION bin
+target_link_libraries(hexandtabler PRIVATE 
+    Qt6::Widgets 
+    Qt6::Concurrent
 )

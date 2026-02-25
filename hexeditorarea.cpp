@@ -303,18 +303,28 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
             
             bool isCursorByte = (cursorByteIndex == (qint64)byteIndex);
             bool isSelected = (m_selectionStart != -1 && 
-                               std::max(m_selectionStart, currentNibbleStart) < std::min(m_selectionEnd, currentNibbleEnd));
+                            std::max(m_selectionStart, currentNibbleStart) < std::min(m_selectionEnd, currentNibbleEnd));
 
-            QColor bgColor = isSelected ? pal.color(QPalette::Highlight) : 
-                             (isCursorByte ? pal.color(QPalette::Midlight) : pal.color(QPalette::Base));
+            QColor bgColor;
+            if (isSelected) {
+                bgColor = pal.color(QPalette::Highlight);
+            } else if (isCursorByte) {
+                bgColor = pal.color(QPalette::Highlight).lighter(150); 
+            } else {
+                bgColor = pal.color(QPalette::Base);
+            }
 
             painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, bgColor);
             painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, bgColor);
             
-            QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
-            painter.setPen((isSelected || isCursorByte) ? pal.color(QPalette::HighlightedText) : pal.color(QPalette::WindowText));
+            if (isSelected || isCursorByte) {
+                painter.setPen(pal.color(QPalette::HighlightedText));
+            } else {
+                painter.setPen(pal.color(QPalette::WindowText));
+            }
             
             int hexStart = m_hexStartCol + i * (3 * m_charWidth);
+            QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
             painter.drawText(hexStart, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(0));
             painter.drawText(hexStart + m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(1));
             
@@ -400,7 +410,6 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
     
     if (shiftIsHeld && m_selectionAnchor == -1) m_selectionAnchor = m_cursorPos;
 
-    // Calculamos cuántas líneas caben en la vista actual para PageUp/PageDown
     int linesPerPage = viewport()->height() / m_charHeight;
     if (linesPerPage < 1) linesPerPage = 1;
 

@@ -20,6 +20,7 @@
 #include <QScrollBar>
 #include <QDebug>
 #include <QFont>
+#include <QStyleHints>
 #include <algorithm>
 #include <cctype> 
 #include <QSignalBlocker> 
@@ -177,7 +178,7 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     connect(replaceAllButton, &QPushButton::clicked, this, &FindReplaceDialog::replaceAllClicked);
     connect(closeButton, &QPushButton::clicked, this, &FindReplaceDialog::close);
     
-    connect(findLineEdit, &QLineEdit::textEdited, [=](){
+    connect(findLineEdit, &QLineEdit::textEdited, [this](){
         backwardsCheckBox->setChecked(false);
     });
     
@@ -231,43 +232,45 @@ hexandtabler::hexandtabler(QWidget *parent) :
     setWindowIcon(QIcon(":/icon.png"));
     
     m_tableWidget = new QTableWidget(this); 
-    // Título restaurado a "Conversion Table"
-    m_tableDock = new QDockWidget(tr("Conversion Table"), this);
+    
+    m_tableDock = new QDockWidget(this);
     
     m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); 
     
     m_tableDock->setWidget(m_tableWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_tableDock);
     setupConversionTable();
+
+    connect(ui->actionDarkMode, &QAction::triggered, this, &hexandtabler::on_actionDarkMode_triggered);
     
     if (ui->hexEdit) {
         QWidget *placeholder = ui->hexEdit;
         QVBoxLayout *layout = qobject_cast<QVBoxLayout*>(placeholder->parentWidget()->layout());
         
         if (layout) {
-            m_hexEditorArea = new HexEditorArea(this);
-            m_hexEditorArea->setHexData(m_fileData);
+            hexArea = new HexEditorArea(this);
+            hexArea->setHexData(m_fileData);
             
             int index = layout->indexOf(placeholder);
             if (index != -1) {
-                layout->insertWidget(index, m_hexEditorArea);
+                layout->insertWidget(index, hexArea);
             } else {
-                layout->addWidget(m_hexEditorArea);
+                layout->addWidget(hexArea);
             }
             
             delete placeholder;
             ui->hexEdit = nullptr; 
         } else {
-            m_hexEditorArea = nullptr; 
+            hexArea = nullptr; 
         }
     } else {
-        m_hexEditorArea = nullptr;
+        hexArea = nullptr;
     }
     
     m_findReplaceDialog = new FindReplaceDialog(this); 
     
-    if (m_hexEditorArea) {
-         connect(m_hexEditorArea, &HexEditorArea::byteEdited, this, &hexandtabler::handleByteEdited);
+    if (hexArea) {
+         connect(hexArea, &HexEditorArea::byteEdited, this, &hexandtabler::handleByteEdited);
     }
     
     if (m_tableWidget) {
@@ -308,8 +311,8 @@ hexandtabler::hexandtabler(QWidget *parent) :
 
     on_actionDarkMode_triggered(ui->actionDarkMode->isChecked());
     
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap); 
+    if (hexArea) {
+        hexArea->setCharMapping(m_charMap); 
     } 
     
     connect(ui->actionToggleTable, &QAction::toggled, m_tableDock, &QDockWidget::setVisible);
@@ -353,6 +356,7 @@ void hexandtabler::on_actionSave_triggered() {
     saveCurrentFile();
 }
 
+
 void hexandtabler::on_actionSaveAs_triggered() {
     saveFileAs();
 }
@@ -385,8 +389,8 @@ bool hexandtabler::saveCurrentFile() {
 }
 
 bool hexandtabler::saveDataToFile(const QString &filePath) {
-    if (m_hexEditorArea) {
-        m_fileData = m_hexEditorArea->hexData();
+    if (hexArea) {
+        m_fileData = hexArea->hexData();
     } else {
         QMessageBox::critical(this, tr("Error"), tr("Editor area is not initialized. Cannot save data."));
         return false;
@@ -405,41 +409,38 @@ bool hexandtabler::saveDataToFile(const QString &filePath) {
     }
 
     file.close();
-    m_isModified = false;
+    m_isDirty = false;
     updateUndoRedoActions();
     return true;
 }
 
+
 void hexandtabler::loadFile(const QString &filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::critical(this, tr("Error"), tr("Could not read file %1:\n%2.").arg(filePath).arg(file.errorString()));
+        statusBar()->showMessage(tr("Error opening file"), 3000);
         return;
     }
 
-    m_fileData = file.readAll();
-    file.close();
+    QByteArray data = file.readAll();
+    hexArea->setHexData(data);
+    
+    setCurrentFile(filePath);
+    clearUndoRedo();
+    m_isDirty = false;
+    updateWindowTitle();
+    
+    statusBar()->showMessage(tr("File loaded: %1 bytes").arg(data.size()), 3000);
+}
 
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setHexData(m_fileData);
-        m_hexEditorArea->goToOffset(0); 
-        m_hexEditorArea->setSelection(-1, -1); 
-    }
-    
+void hexandtabler::setCurrentFile(const QString &filePath) {
     m_currentFilePath = filePath;
-    m_isModified = false;
-    m_fileData = m_hexEditorArea->hexData();
-    m_undoStack.clear();
-    m_redoStack.clear();
-    updateUndoRedoActions();
-    
-    setWindowTitle(QString("%1 - %2").arg(applicationName).arg(QFileInfo(filePath).fileName()));
-    prependToRecentFiles(filePath);
+    updateWindowTitle();
 }
 
 bool hexandtabler::maybeSave()
 {
-    if (!m_isModified)
+    if (!m_isDirty)
         return true;
 
     const QMessageBox::StandardButton ret
@@ -470,7 +471,7 @@ void hexandtabler::on_actionAbout_triggered() {
 
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
-    QPalette p = QApplication::palette();
+    QPalette p;
     if (checked) {
         p.setColor(QPalette::Window, QColor(53, 53, 53));
         p.setColor(QPalette::WindowText, Qt::white);
@@ -486,24 +487,38 @@ void hexandtabler::on_actionDarkMode_triggered(bool checked) {
         p.setColor(QPalette::Highlight, QColor(42, 130, 218));
         p.setColor(QPalette::HighlightedText, Qt::black);
     } else {
-        p = QApplication::style()->standardPalette();
+        p.setColor(QPalette::Window, QColor(240, 240, 240));
+        p.setColor(QPalette::WindowText, Qt::black);
+        p.setColor(QPalette::Base, Qt::white);
+        p.setColor(QPalette::AlternateBase, QColor(233, 231, 227));
+        p.setColor(QPalette::ToolTipBase, Qt::black);
+        p.setColor(QPalette::ToolTipText, Qt::black);
+        p.setColor(QPalette::Text, Qt::black);
+        p.setColor(QPalette::Button, QColor(240, 240, 240));
+        p.setColor(QPalette::ButtonText, Qt::black);
+        p.setColor(QPalette::BrightText, Qt::red);
+        p.setColor(QPalette::Link, QColor(0, 0, 255));
+        p.setColor(QPalette::Highlight, QColor(0, 100, 205));
+        p.setColor(QPalette::HighlightedText, Qt::white);
     }
+
     QApplication::setPalette(p);
-    
-    QSettings settings(organizationName, applicationName);
-    settings.setValue("darkMode", checked);
+    for (QWidget *widget : QApplication::allWidgets()) {
+        widget->setPalette(p);
+        widget->update();
+    }
 }
 
 void hexandtabler::on_actionZoomIn_triggered() {
-    if (m_hexEditorArea) m_hexEditorArea->setFont(QFont(m_hexEditorArea->font().family(), m_hexEditorArea->font().pointSize() + 1));
+    if (hexArea) hexArea->setFont(QFont(hexArea->font().family(), hexArea->font().pointSize() + 1));
 }
 
 void hexandtabler::on_actionZoomOut_triggered() {
-    if (m_hexEditorArea) m_hexEditorArea->setFont(QFont(m_hexEditorArea->font().family(), std::max(8, m_hexEditorArea->font().pointSize() - 1)));
+    if (hexArea) hexArea->setFont(QFont(hexArea->font().family(), std::max(8, hexArea->font().pointSize() - 1)));
 }
 
 void hexandtabler::on_actionGoTo_triggered() {
-    if (!m_hexEditorArea) return;
+    if (!hexArea) return;
 
     static QString lastOffset = "0";
 
@@ -542,7 +557,7 @@ void hexandtabler::on_actionGoTo_triggered() {
 
     if (hexOk) {
         lastOffset = text; 
-        m_hexEditorArea->goToOffset(offset);
+        hexArea->goToOffset(offset);
     } else {
         QMessageBox::warning(this, tr("Invalid Input"), tr("The input is not a valid hexadecimal number."));
     }
@@ -550,14 +565,14 @@ void hexandtabler::on_actionGoTo_triggered() {
 
 
 void hexandtabler::pushUndoState() {
-    if (!m_hexEditorArea) return;
+    if (!hexArea) return;
 
-    QByteArray newData = m_hexEditorArea->hexData();
+    QByteArray newData = hexArea->hexData();
 
     EditorState state;
-    state.cursorPos      = m_hexEditorArea->cursorPosition();
-    state.selectionStart = m_hexEditorArea->selectionStart();
-    state.selectionEnd   = m_hexEditorArea->selectionEnd();
+    state.cursorPos      = hexArea->cursorPosition();
+    state.selectionStart = hexArea->selectionStart();
+    state.selectionEnd   = hexArea->selectionEnd();
 
     int minLen = qMin(m_fileData.size(), newData.size());
     for (int i = 0; i < minLen; ++i) {
@@ -580,194 +595,200 @@ void hexandtabler::pushUndoState() {
     updateUndoRedoActions();
 }
 
+void hexandtabler::clearUndoRedo() {
+    m_undoStack.clear();
+    m_redoStack.clear();
+    updateUndoRedoActions();
+}
+
 void hexandtabler::updateUndoRedoActions() {
-    if (ui->actionUndo) {
-        ui->actionUndo->setEnabled(m_undoStack.size() > 1);
+    if (ui->actionUndo) ui->actionUndo->setEnabled(!m_undoStack.isEmpty());
+    if (ui->actionRedo) ui->actionRedo->setEnabled(!m_redoStack.isEmpty());
+}
+
+void hexandtabler::updateWindowTitle() {
+    QString title = "hexandtabler";
+    if (!m_currentFilePath.isEmpty()) {
+        title += " - " + QFileInfo(m_currentFilePath).fileName();
     }
-    if (ui->actionRedo) {
-        ui->actionRedo->setEnabled(!m_redoStack.isEmpty());
-    }
+    if (m_isDirty) title += "*";
+    setWindowTitle(title);
+}
+
+void hexandtabler::onSaveFinished() {
+    m_isDirty = false;
+    updateWindowTitle();
 }
 
 void hexandtabler::on_actionUndo_triggered() {
-    if (!m_hexEditorArea || m_undoStack.isEmpty()) return;
+    if (!hexArea || m_undoStack.isEmpty()) return;
 
     EditorState state = m_undoStack.takeLast();
     m_redoStack.append(state);
 
-    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray data = hexArea->hexData();
     for (const ByteChange &c : state.changes) {
         if (c.offset < data.size())
             data[(int)c.offset] = (char)c.oldByte;
     }
 
     m_fileData = data;
-    m_hexEditorArea->setHexData(m_fileData);
-    m_hexEditorArea->setCursorPosition(state.cursorPos);
-    m_hexEditorArea->setSelection(state.selectionStart, state.selectionEnd);
+    hexArea->setHexData(m_fileData);
+    hexArea->setCursorPosition(state.cursorPos);
+    hexArea->setSelection(state.selectionStart, state.selectionEnd);
 
-    m_isModified = true;
+    m_isDirty = true;
     updateUndoRedoActions();
 }
 
 void hexandtabler::on_actionRedo_triggered() {
-    if (!m_hexEditorArea || m_redoStack.isEmpty()) return;
+    if (!hexArea || m_redoStack.isEmpty()) return;
 
     EditorState state = m_redoStack.takeLast();
     m_undoStack.append(state);
 
-    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray data = hexArea->hexData();
     for (const ByteChange &c : state.changes) {
         if (c.offset < data.size())
             data[(int)c.offset] = (char)c.newByte;
     }
 
     m_fileData = data;
-    m_hexEditorArea->setHexData(m_fileData);
-    m_hexEditorArea->setCursorPosition(state.cursorPos);
-    m_hexEditorArea->setSelection(state.selectionStart, state.selectionEnd);
+    hexArea->setHexData(m_fileData);
+    hexArea->setCursorPosition(state.cursorPos);
+    hexArea->setSelection(state.selectionStart, state.selectionEnd);
 
-    m_isModified = true;
+    m_isDirty = true;
     updateUndoRedoActions();
 }
 
-QVector<qint16> hexandtabler::calculateRelativeOffsets(const QString &input) const {
-    QVector<qint16> offsets;
-    
-    if (input.length() < MIN_CHARS_FOR_RELATIVE_SEARCH) {
-        return offsets; 
-    }
+std::vector<int16_t> hexandtabler::calculateRelativeOffsets(const QString &input) const {
+    std::vector<int16_t> offsets;
+    if (input.isEmpty()) return offsets;
 
-    int firstCharIndex = -1;
+    int base = input[0].unicode();
     for (int i = 0; i < input.length(); ++i) {
-        if (input.at(i).isLetter()) { 
-            firstCharIndex = i;
-            break;
-        }
+        offsets.push_back(static_cast<int16_t>(input[i].unicode() - base));
     }
-    
-    if (firstCharIndex == -1) {
-        return offsets; 
-    }
-
-    quint16 baseValue = input.at(firstCharIndex).unicode(); 
-
-    for (int i = 0; i < input.length(); ++i) {
-        QChar currentChar = input.at(i);
-
-        if (!currentChar.isLetter()) {
-            offsets.append(WILD_CARD_OFFSET);
-        } else {
-            quint16 currentValue = currentChar.unicode();
-            
-            qint16 offset = (qint16)currentValue - (qint16)baseValue; 
-            
-            offsets.append(offset);
-        }
-    }
-
     return offsets;
 }
 
+std::optional<qsizetype> hexandtabler::performRelativeSearchTask(const QByteArray data, 
+                                                                const std::vector<int16_t> offsets, 
+                                                                qsizetype startPos, 
+                                                                bool backwards) {
+    if (data.isEmpty() || offsets.empty()) return std::nullopt;
+
+    auto checkMatch = [&](qsizetype pos) {
+        if (pos + (qsizetype)offsets.size() > data.size()) return false;
+        int baseValue = static_cast<uint8_t>(data[pos]);
+        for (size_t j = 1; j < offsets.size(); ++j) {
+            if (static_cast<uint8_t>(data[pos + j]) - baseValue != offsets[j]) return false;
+        }
+        return true;
+    };
+
+    if (backwards) {
+        qsizetype start = std::min<qsizetype>(startPos, data.size() - offsets.size());
+        for (qsizetype i = start; i >= 0; --i) {
+            if (checkMatch(i)) return i;
+        }
+    } else {
+        for (qsizetype i = startPos; i <= data.size() - (qsizetype)offsets.size(); ++i) {
+            if (checkMatch(i)) return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void hexandtabler::on_actionSearchRelative_triggered() {
+    if (m_findReplaceDialog) {
+        m_findReplaceDialog->show();
+        m_findReplaceDialog->raise();
+        m_findReplaceDialog->activateWindow();
+    }
+}
+
 void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool backwards) {
-    
-    QVector<qint16> offsets = calculateRelativeOffsets(searchText);
-    
-    if (offsets.isEmpty()) {
-        QMessageBox::information(this, tr("Relative Search"), 
-            tr("It requires %1 characters at least, and must contain at least one letter.")
-            .arg(MIN_CHARS_FOR_RELATIVE_SEARCH));
-        return;
-    }
+    if (!hexArea || searchText.isEmpty() || m_fileData.isEmpty()) return;
 
-    int n = offsets.size();
-    const QByteArray &data = m_fileData;
-    int dataSize = data.size();
-    
-    if (dataSize < n) {
-        QMessageBox::information(this, tr("Relative Search"), 
-            tr("File too small for a sequence of %1 bytes.")
-            .arg(n));
-        return;
-    }
+    std::vector<int16_t> offsets = calculateRelativeOffsets(searchText);
+    if (offsets.empty()) return;
 
-    qint64 currentBytePos = m_hexEditorArea->cursorPosition() / 2;
-    qint64 startIndex = currentBytePos; 
-    
-    if (!backwards) {
-        startIndex = std::min((qint64)dataSize - n, startIndex + 1); 
-    } else {
-        QMessageBox::warning(this, tr("Relative search"), tr("Not implemented."));
-        return;
-    }
+    qsizetype totalSize = m_fileData.size();
+    int numThreads = QThread::idealThreadCount(); 
+    qsizetype chunkSize = totalSize / numThreads;
+    qsizetype overlap = static_cast<qsizetype>(offsets.size()) - 1;
 
+    QList<QFuture<std::optional<qsizetype>>> futures;
 
-    qint64 foundPos = -1;
-    
-    for (qint64 i = startIndex; i <= dataSize - n; ++i) {
-        
-        qint8 baseByte = data.at(i);
-        bool match = true;
-        
-        for (int k = 0; k < n; ++k) {
-            
-            qint16 expectedOffset = offsets.at(k); 
+    for (int i = 0; i < numThreads; ++i) {
+        qsizetype start = i * chunkSize;
+        qsizetype end = (i == numThreads - 1) ? totalSize : (i + 1) * chunkSize + overlap;
+        if (end > totalSize) end = totalSize;
 
-            if (expectedOffset == WILD_CARD_OFFSET) {
-                continue; 
-            }
-
-            qint8 currentByte = data.at(i + k); 
-            qint16 actualOffset = (qint16)currentByte - (qint16)baseByte; 
-            
-            if (actualOffset != expectedOffset) {
-                match = false;
-                break;
-            }
-        }
-        
-        if (match) {
-            foundPos = i;
-            break; 
-        }
-    }
-    
-    if (foundPos == -1 && wrap) {
-        for (qint64 i = 0; i < startIndex; ++i) {
-            qint8 baseByte = data.at(i);
-            bool match = true;
-            
-            for (int k = 0; k < n; ++k) {
-                
-                qint16 expectedOffset = offsets.at(k); 
-                
-                if (expectedOffset == WILD_CARD_OFFSET) {
-                    continue; 
+        futures.append(QtConcurrent::run([this, start, end, offsets, backwards]() -> std::optional<qsizetype> {
+            auto checkMatch = [&](qsizetype pos) {
+                if (pos + static_cast<qsizetype>(offsets.size()) > m_fileData.size()) return false;
+                int baseValue = static_cast<uint8_t>(m_fileData[pos]);
+                for (size_t j = 1; j < offsets.size(); ++j) {
+                    if (static_cast<uint8_t>(m_fileData[pos + j]) - baseValue != offsets[j]) return false;
                 }
+                return true;
+            };
 
-                qint8 currentByte = data.at(i + k); 
-                qint16 actualOffset = (qint16)currentByte - (qint16)baseByte; 
-                
-                if (actualOffset != expectedOffset) {
-                    match = false;
-                    break;
+            if (backwards) {
+                qsizetype searchStart = std::min<qsizetype>(end - static_cast<qsizetype>(offsets.size()), m_fileData.size() - static_cast<qsizetype>(offsets.size()));
+                for (qsizetype i = searchStart; i >= start; --i) {
+                    if (checkMatch(i)) return i;
+                }
+            } else {
+                for (qsizetype i = start; i <= end - static_cast<qsizetype>(offsets.size()); ++i) {
+                    if (checkMatch(i)) return i;
                 }
             }
-            
-            if (match) {
-                foundPos = i;
-                break; 
-            }
-        }
+            return std::nullopt;
+        }));
     }
 
-    if (foundPos != -1) {
-        m_hexEditorArea->goToOffset(foundPos);
-        m_hexEditorArea->setSelection(foundPos * 2, (foundPos + n) * 2);
+    qsizetype currentPos = hexArea->cursorPosition();
+
+    m_findWatcher.setFuture(QtConcurrent::run([futures, currentPos, backwards, wrap]() -> std::optional<qsizetype> {
+        QList<qsizetype> allMatches;
+        for (auto f : futures) {
+            auto res = f.result();
+            if (res.has_value()) allMatches.append(res.value());
+        }
+
+        if (allMatches.isEmpty()) return std::nullopt;
+
+        std::sort(allMatches.begin(), allMatches.end());
+
+        if (backwards) {
+            for (int i = allMatches.size() - 1; i >= 0; --i) {
+                if (allMatches[i] < currentPos) return std::optional<qsizetype>(allMatches[i]);
+            }
+            return wrap ? std::optional<qsizetype>(allMatches.last()) : std::nullopt;
+        } else {
+            for (qsizetype match : allMatches) {
+                if (match > currentPos) return std::optional<qsizetype>(match);
+            }
+            return wrap ? std::optional<qsizetype>(allMatches.first()) : std::nullopt;
+        }
+    }));
+}
+
+void hexandtabler::findNextRelative(const QString &searchText, bool backwards) {
+    findNextRelative(searchText, true, backwards);
+}
+
+void hexandtabler::onFindFinished() {
+    unsetCursor();
+    auto result = m_findWatcher.result();
+    if (result) {
+        hexArea->setCursorPosition(*result);
     } else {
-        QMessageBox::information(this, tr("Relative Search"), 
-            tr("No coincidences found for this relative search \"%1\".")
-            .arg(searchText));
+        statusBar()->showMessage(tr("Nothing found"), 2000);
     }
 }
 
@@ -786,13 +807,13 @@ void hexandtabler::on_actionReplace_triggered() {
 }
 
 void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards) {
-    if (!m_hexEditorArea || needle.isEmpty()) return;
+    if (!hexArea || needle.isEmpty()) return;
     
-    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray data = hexArea->hexData();
     qint64 dataSize = data.size();
     qint64 needleSize = needle.size();
     
-    qint64 currentBytePos = m_hexEditorArea->cursorPosition() / 2; 
+    qint64 currentBytePos = hexArea->cursorPosition() / 2; 
 
     QByteArray searchData = caseSensitive ? data : data.toLower();
     QByteArray searchNeedle = caseSensitive ? needle : needle.toLower();
@@ -802,8 +823,8 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
     if (!backwards) {
         qint64 searchStart;
         
-        if (m_hexEditorArea->selectionEnd() != -1) { 
-            searchStart = m_hexEditorArea->selectionEnd() / 2; 
+        if (hexArea->selectionEnd() != -1) { 
+            searchStart = hexArea->selectionEnd() / 2; 
         } 
         else if (currentBytePos < dataSize && searchData.mid(currentBytePos, needleSize) == searchNeedle) {
             searchStart = currentBytePos + 1;
@@ -826,8 +847,8 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
     } else {
         qint64 searchEnd;
         
-        if (m_hexEditorArea->selectionStart() != -1) { 
-            searchEnd = m_hexEditorArea->selectionStart() / 2 - 1; 
+        if (hexArea->selectionStart() != -1) { 
+            searchEnd = hexArea->selectionStart() / 2 - 1; 
         }
         else {
              searchEnd = currentBytePos - 1;
@@ -851,15 +872,15 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
     }
 
     if (foundPos != -1) {
-        m_hexEditorArea->goToOffset(foundPos);
-        m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needleSize) * 2);
+        hexArea->goToOffset(foundPos);
+        hexArea->setSelection(foundPos * 2, (foundPos + needleSize) * 2);
     } else {
         QMessageBox::information(this, tr("Find Result"), tr("Search pattern not found."));
     }
 }
 
 void hexandtabler::replaceOne() {
-    if (!m_hexEditorArea || !m_findReplaceDialog) return;
+    if (!hexArea || !m_findReplaceDialog) return;
     
     if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch) {
         QMessageBox::warning(this, tr("Replace Error"), tr("Replace function is not available for Relative Search mode."));
@@ -877,11 +898,11 @@ void hexandtabler::replaceOne() {
     bool caseSensitive = m_findReplaceDialog->isCaseSensitive();
     bool wrap = m_findReplaceDialog->isWrapped();
 
-    qint64 currentBytePos = (m_hexEditorArea->selectionStart() != -1) 
-                            ? (m_hexEditorArea->selectionStart() / 2) 
-                            : (m_hexEditorArea->cursorPosition() / 2); 
+    qint64 currentBytePos = (hexArea->selectionStart() != -1) 
+                            ? (hexArea->selectionStart() / 2) 
+                            : (hexArea->cursorPosition() / 2); 
     
-    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray data = hexArea->hexData();
 
     QByteArray currentDataCheck = caseSensitive ? data.mid(currentBytePos, needle.size()) : data.mid(currentBytePos, needle.size()).toLower();
     QByteArray searchNeedle = caseSensitive ? needle : needle.toLower();
@@ -889,11 +910,11 @@ void hexandtabler::replaceOne() {
     bool replaced = false;
     if (currentDataCheck == searchNeedle) {
         data.replace(currentBytePos, needle.size(), replacement);
-        m_hexEditorArea->setHexData(data);
+        hexArea->setHexData(data);
         pushUndoState();
         
-        m_hexEditorArea->goToOffset(currentBytePos + replacement.size());
-        m_hexEditorArea->setSelection(-1, -1); 
+        hexArea->goToOffset(currentBytePos + replacement.size());
+        hexArea->setSelection(-1, -1); 
         
         replaced = true;
     }
@@ -903,21 +924,21 @@ void hexandtabler::replaceOne() {
         if (currentDataCheck == searchNeedle) {
              searchStart = currentBytePos + 1;
         } else {
-             searchStart = m_hexEditorArea->cursorPosition() / 2;
+             searchStart = hexArea->cursorPosition() / 2;
         }
     }
     
-    QByteArray searchData = caseSensitive ? m_hexEditorArea->hexData() : m_hexEditorArea->hexData().toLower();
+    QByteArray searchData = caseSensitive ? hexArea->hexData() : hexArea->hexData().toLower();
     qint64 foundPos = searchData.indexOf(searchNeedle, searchStart);
     
     if (foundPos != -1) {
-        m_hexEditorArea->goToOffset(foundPos);
-        m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
+        hexArea->goToOffset(foundPos);
+        hexArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
     } else if (wrap) {
         foundPos = searchData.indexOf(searchNeedle, 0);
         if (foundPos != -1 && foundPos < searchStart) {
-             m_hexEditorArea->goToOffset(foundPos);
-             m_hexEditorArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
+             hexArea->goToOffset(foundPos);
+             hexArea->setSelection(foundPos * 2, (foundPos + needle.size()) * 2);
         } else {
             QMessageBox::information(this, tr("Replace Result"), tr("No more matches found."));
         }
@@ -927,14 +948,14 @@ void hexandtabler::replaceOne() {
 }
 
 void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replacement) {
-    if (!m_hexEditorArea || needle.isEmpty()) return;
+    if (!hexArea || needle.isEmpty()) return;
     
     if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch) {
         QMessageBox::warning(this, tr("Replace Error"), tr("Replace All function is not available for Relative Search mode."));
         return;
     }
 
-    QByteArray data = m_hexEditorArea->hexData();
+    QByteArray data = hexArea->hexData();
     QByteArray searchNeedle = m_findReplaceDialog->isCaseSensitive() ? needle : needle.toLower();
     
     if (!m_findReplaceDialog->isCaseSensitive()) {
@@ -975,24 +996,24 @@ void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replac
         }
     }
 
-    m_hexEditorArea->setHexData(data);
+    hexArea->setHexData(data);
     pushUndoState();
-    m_hexEditorArea->goToOffset(0); 
-    m_hexEditorArea->setSelection(-1, -1);
+    hexArea->goToOffset(0); 
+    hexArea->setSelection(-1, -1);
 }
 
 
 void hexandtabler::on_actionCopy_triggered()
 {
-    if (m_hexEditorArea) {
-        m_hexEditorArea->copySelection();
+    if (hexArea) {
+        hexArea->copySelection();
     }
 }
 
 void hexandtabler::on_actionPaste_triggered()
 {
-    if (m_hexEditorArea) {
-        m_hexEditorArea->pasteFromClipboard();
+    if (hexArea) {
+        hexArea->pasteFromClipboard();
     }
 }
 
@@ -1142,8 +1163,8 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
         }
     }
     
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
+    if (hexArea) {
+        hexArea->setCharMapping(m_charMap);
     }
 
     return true;
@@ -1164,10 +1185,10 @@ void hexandtabler::clearCharMappingTable() {
         }
     }
     
-    if (m_hexEditorArea) { 
-        m_hexEditorArea->setCharMapping(m_charMap); 
+    if (hexArea) { 
+        hexArea->setCharMapping(m_charMap); 
     }
-    m_isModified = true;
+    m_isDirty = true;
 }
 
 void hexandtabler::on_actionClearTable_triggered() {
@@ -1206,8 +1227,8 @@ void hexandtabler::insertSeries(const QList<QString> &series) {
         }
     }
 
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
+    if (hexArea) {
+        hexArea->setCharMapping(m_charMap);
     }
 }
 
@@ -1288,9 +1309,9 @@ void hexandtabler::handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByt
     }
 
     EditorState state;
-    state.cursorPos      = m_hexEditorArea->cursorPosition();
-    state.selectionStart = m_hexEditorArea->selectionStart();
-    state.selectionEnd   = m_hexEditorArea->selectionEnd();
+    state.cursorPos      = hexArea->cursorPosition();
+    state.selectionStart = hexArea->selectionStart();
+    state.selectionEnd   = hexArea->selectionEnd();
     state.changes.append(ByteChange(offset, oldByte, newByte));
 
     m_undoStack.append(state);
@@ -1298,7 +1319,7 @@ void hexandtabler::handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByt
         m_undoStack.removeFirst();
     m_redoStack.clear();
 
-    m_isModified = true;
+    m_isDirty = true;
     updateUndoRedoActions();
 }
 
@@ -1323,8 +1344,8 @@ void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
     
     m_charMap[row] = finalChar;
     
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
+    if (hexArea) {
+        hexArea->setCharMapping(m_charMap);
     }
 }
 
@@ -1350,7 +1371,7 @@ void hexandtabler::loadRecentFiles() {
     QStringList files = settings.value("recentFiles").toStringList();
     
     QStringList existingFiles;
-    for (const QString &filePath : qAsConst(files)) {
+    for (const QString &filePath : std::as_const(files)) {
         if (QFile::exists(filePath)) {
             existingFiles.append(filePath);
         }
@@ -1367,7 +1388,7 @@ void hexandtabler::updateRecentFileActions() {
     QSettings settings(organizationName, applicationName);
     QStringList files = settings.value("recentFiles").toStringList();
     
-    int numRecentFiles = std::min(files.size(), (int)MaxRecentFiles);
+    int numRecentFiles = std::min<int>(static_cast<int>(files.size()), static_cast<int>(MaxRecentFiles));
     
     QAction *separator = nullptr;
     QList<QAction*> actions = ui->menuFile->actions();
@@ -1556,8 +1577,8 @@ void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
         }
     }
 
-    if (m_hexEditorArea) {
-        m_hexEditorArea->setCharMapping(m_charMap);
+    if (hexArea) {
+        hexArea->setCharMapping(m_charMap);
     }
 }
 
@@ -1573,29 +1594,22 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
 
-    // 1. Create the configuration dialog
     QDialog configDialog(this);
-    configDialog.setWindowTitle(tr("Configure Encoding Guess"));
+    configDialog.setWindowTitle(tr("Relativity due position"));
 
     QVBoxLayout *mainLayout = new QVBoxLayout(&configDialog);
-
-    // Known Phrases Input (Now separated ONLY by new lines)
     QTextEdit *phrasesEdit = new QTextEdit;
-    phrasesEdit->setPlaceholderText(tr("Enter known phrases (one per line, minimum %1 chars each):").arg(3));
+    phrasesEdit->setPlaceholderText(tr("Enter known phrases \nto find hex coincidences\n(one phrase per line, minimum %1 chars each):").arg(3));
     
-    // Search Configuration Input
-    // Default end offset is the size of the file in hex
     qint64 fileSize = m_fileData.size();
     QString maxOffsetHex = QString::number(fileSize > 0 ? fileSize - 1 : 0, 16).toUpper(); 
     QLineEdit *startOffsetEdit = new QLineEdit("0");
     QLineEdit *endOffsetEdit = new QLineEdit(maxOffsetHex);
-    // Removed QCheckBox *backwardsCheck
     
     QFormLayout *formLayout = new QFormLayout;
     formLayout->addRow(tr("Known Phrases:"), phrasesEdit);
     formLayout->addRow(tr("Start Offset (Hex):"), startOffsetEdit);
     formLayout->addRow(tr("End Offset (Hex, inclusive):"), endOffsetEdit); // User provides the last byte index
-    // Removed 'Direction' row
 
     mainLayout->addLayout(formLayout);
 
@@ -1604,20 +1618,15 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
     connect(buttonBox, &QDialogButtonBox::rejected, &configDialog, &QDialog::reject);
     mainLayout->addWidget(buttonBox);
 
-    // 2. Execute the dialog
     if (configDialog.exec() != QDialog::Accepted) {
         return;
     }
 
-    // 3. Process user inputs and validate
     QString input = phrasesEdit->toPlainText();
     bool startOk, endOk;
-    // Parse offsets as hex
     quint64 startOffset = startOffsetEdit->text().toULongLong(&startOk, 16);
     quint64 endOffset = endOffsetEdit->text().toULongLong(&endOk, 16);
     
-    // Offset validation
-    // Check if conversion was successful, start <= end, and end is within file bounds.
     if (!startOk || !endOk || startOffset > endOffset || endOffset >= (quint64)fileSize) {
         QMessageBox::warning(this, tr("Encoding Guess"), 
                              tr("Invalid start/end offsets. Please use valid hex values where Start <= End < FileSize (0x%1).")
@@ -1625,7 +1634,6 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
     
-    // Phrase processing: ONLY split by new line
     QStringList rawPhrases = input.split('\n', Qt::SkipEmptyParts);
     
     QList<KnownPhrase> searchPhrases;
@@ -1646,21 +1654,15 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
         return;
     }
     
-    // 4. Execute the function with the new parameters
-    // Removed 'backwards' argument
-    m_guessSearchFuture = QtConcurrent::run(this, 
-                                            &hexandtabler::guessEncoding, 
-                                            searchPhrases, 
-                                            startOffset, 
-                                            endOffset); 
+    m_guessSearchFuture = QtConcurrent::run([this, searchPhrases, startOffset, endOffset]() {
+    return this->guessEncoding(searchPhrases, startOffset, endOffset);
+});
 
-    // Connect the result to a QFutureWatcher to ensure processing on the main thread
     QFutureWatcher<QList<QMap<QChar, quint8>>> *watcher = new QFutureWatcher<QList<QMap<QChar, quint8>>>(this);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, this, &hexandtabler::handleGuessEncodingFinished);
     connect(watcher, &QFutureWatcher<QList<QMap<QChar, quint8>>>::finished, watcher, &QObject::deleteLater); 
     watcher->setFuture(m_guessSearchFuture);
 
-    // Non-blocking notification
     QMessageBox::information(this, tr("Encoding Guess"), tr("Search started in the background. The selection window will appear when the results are ready."));
 }
 
@@ -1669,7 +1671,7 @@ void hexandtabler::handleGuessEncodingFinished() {
     QList<QMap<QChar, quint8>> results = m_guessSearchFuture.result();
     if (results.isEmpty()) {
         QMessageBox::information(this, tr("Encoding Guess Result"),
-            tr("No patterns matching the known phrases were found."));
+            tr("No patterns matching the known phrases were found. This searches by the distance of the characters in the phrases, instead of the distance according their alphabet. Try phrases with more character coincidences."));
         return;
     }
 
@@ -1736,5 +1738,30 @@ void hexandtabler::handleGuessEncodingFinished() {
     }
 }
 
+void hexandtabler::dragEnterEvent(QDragEnterEvent *event) {
+    if (event->mimeData()->hasUrls()) {
+        event->acceptProposedAction();
+    }
+}
+
+void hexandtabler::dropEvent(QDropEvent *event) {
+    const QList<QUrl> urls = event->mimeData()->urls();
+    if (!urls.isEmpty()) {
+        QString filePath = urls.first().toLocalFile();
+        if (!filePath.isEmpty()) {
+            loadFile(filePath);
+        }
+    }
+}
+
+void hexandtabler::on_themeChanged(int index) {
+    bool isDark = (index == 2);
+    
+    if (index == 0) {
+        isDark = (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark);
+    }
+
+    on_actionDarkMode_triggered(isDark);
+}
 
 #include "hexandtabler.moc"

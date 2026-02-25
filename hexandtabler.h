@@ -5,157 +5,170 @@
 #include <QByteArray>
 #include <QList>
 #include <QAction>
-#include <QString> 
-#include <QTableWidgetItem> 
+#include <QString>
+#include <QTableWidgetItem>
 #include <QCloseEvent>
-#include <QModelIndexList> 
-#include <QVector> 
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QMap>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QtConcurrent>
+#include <QTableWidget>
+#include <QDockWidget>
+#include <QLabel>
+#include <QFileDialog>
+#include <QDir>
+#include <optional>
+#include <vector>
 
 class HexEditorArea;
-class QTableWidget;
-class QDockWidget;
-class FindReplaceDialog; 
-class QRadioButton; 
+class FindReplaceDialog;
 
-namespace Ui {
-class hexandtabler;
-}
+namespace Ui { class hexandtabler; }
 
-// Estructura para manejar frases conocidas
 struct KnownPhrase {
     QString text;
     int length = 0;
     QMap<QChar, QList<int>> pattern;
 };
 
-class hexandtabler : public QMainWindow
-{
+class hexandtabler : public QMainWindow {
     Q_OBJECT
 
 public:
     explicit hexandtabler(QWidget *parent = nullptr);
     ~hexandtabler();
     
-    QByteArray convertSearchString(const QString &input, int type) const; 
+    QByteArray convertSearchString(const QString &input, int type) const;
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void on_actionOpen_triggered();
     void on_actionSave_triggered();
-    void on_actionSaveAs_triggered(); 
+    void on_actionSaveAs_triggered();
     void on_actionExit_triggered();
     void on_actionAbout_triggered();
-    
-    void on_actionDarkMode_triggered(bool checked); 
-    
     void on_actionUndo_triggered();
     void on_actionRedo_triggered();
-    
+    void on_actionCopy_triggered();
+    void on_actionPaste_triggered();
+    void on_themeChanged(int index);
     void on_actionZoomIn_triggered();
     void on_actionZoomOut_triggered();
-    
-    void on_actionGoTo_triggered(); 
-    
+    void on_actionGoTo_triggered();
     void on_actionFind_triggered();
-    void on_actionReplace_triggered(); 
-    void on_actionCopy_triggered();       
-    void on_actionPaste_triggered();
-    
+    void on_actionReplace_triggered();
+    void on_actionSearchRelative_triggered();
+    void on_actionGuessEncoding_triggered();
     void on_actionToggleTable_triggered(bool checked);
-    
     void on_actionLoadTable_triggered();
     void on_actionSaveTable_triggered();
     void on_actionSaveTableAs_triggered();
     void on_actionClearTable_triggered();
-    
+
     void on_actionInsertLatinUpper_triggered();
     void on_actionInsertLatinLower_triggered();
     void on_actionInsertHiragana_triggered();
     void on_actionInsertKatakana_triggered();
     void on_actionInsertCyrillic_triggered();
     void on_actionInsertNumbers19_triggered();
-    
-    void openRecentFile(); 
-    void handleTableItemChanged(QTableWidgetItem *item);
-    void handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByte);
 
-    void on_actionGuessEncoding_triggered();
+    void onSaveFinished();
+    void onFindFinished();
     void handleGuessEncodingFinished();
+    void handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByte);
+    void handleTableItemChanged(QTableWidgetItem *item);
+    void openRecentFile();
+    void replaceOne();
 
 private:
     Ui::hexandtabler *ui;
-    HexEditorArea *m_hexEditorArea = nullptr;
-    QTableWidget *m_tableWidget = nullptr; 
-    QDockWidget *m_tableDock = nullptr;
-    QByteArray m_fileData;
-    FindReplaceDialog *m_findReplaceDialog = nullptr;
-    
-    QString m_currentFilePath;
-    QString m_currentTablePath; 
-    bool m_isModified = false;
 
-    QFuture<QList<QMap<QChar, quint8>>> m_guessSearchFuture; 
-    QMap<QChar, QList<int>> calculatePattern(const QString &text) const;
-    QList<QMap<QChar, quint8>> guessEncoding(const QList<KnownPhrase> &phrases, quint64 startOffset,quint64 endOffset);
-    void addFoundMappingToTable(const QMap<QChar, quint8> &mapping);
+    HexEditorArea *hexArea; 
+    QTableWidget *m_tableWidget;
+    QDockWidget *m_tableDock;
+    FindReplaceDialog *m_findReplaceDialog;
+
+    QByteArray m_fileData;
+    QString m_currentFilePath;
+    QString m_currentTablePath;
     
+    bool m_isDirty = false; 
+
+    QString m_charMap[256];
+
+    static const int MaxRecentFiles = 10;
+    QAction *recentFileActions[MaxRecentFiles];
+
+    QFutureWatcher<std::optional<qsizetype>> m_findWatcher;
+    QFuture<QList<QMap<QChar, unsigned char>>> m_guessSearchFuture;
+
     struct ByteChange {
-    qint64 offset;
-    quint8 oldByte;
-    quint8 newByte;
-    ByteChange(qint64 o, quint8 ob, quint8 nb) : offset(o), oldByte(ob), newByte(nb) {}
-};
+        qsizetype offset;
+        quint8 oldByte;
+        quint8 newByte;
+    };
 
     struct EditorState {
-        QList<ByteChange> changes;  // cambios respecto al estado anterior
-        qint64 cursorPos;
-        qint64 selectionStart;
-        qint64 selectionEnd;
+        QList<ByteChange> changes;
+        qsizetype cursorPos;
+        qsizetype selectionStart; 
+        qsizetype selectionEnd;   
     };
-    
+
     QList<EditorState> m_undoStack;
     QList<EditorState> m_redoStack;
-    
 
-    QString m_charMap[256]; 
+    void loadFile(const QString &filePath);
+    void setCurrentFile(const QString &filePath);
+    bool saveFileAs();
+    bool saveCurrentFile();
+    bool saveDataToFile(const QString &filePath);
+    void updateWindowTitle();
 
     void findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards);
-    void replaceOne();
+    
+    void findNextRelative(const QString &searchText, bool backwards);
+    void findNextRelative(const QString &searchText, bool wrap, bool backwards);
+
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
     
-    void findNextRelative(const QString &searchText, bool wrap, bool backwards);
-    QVector<qint16> calculateRelativeOffsets(const QString &input) const; 
-    
-    enum { MaxRecentFiles = 5 };
-    QAction *recentFileActions[MaxRecentFiles];
-    
+    std::vector<int16_t> calculateRelativeOffsets(const QString &input) const;
+    static std::optional<qsizetype> performRelativeSearchTask(const QByteArray data, 
+                                                            const std::vector<int16_t> offsets, 
+                                                            qsizetype startPos, 
+                                                            bool backwards);
+
     void setupConversionTable();
-    
-    void loadFile(const QString &filePath);
-    void setCurrentFile(const QString &filePath); 
-    bool saveDataToFile(const QString &filePath); 
-    bool saveFileAs();                            
-    bool saveCurrentFile();
-    bool maybeSave();
-    
-    void refreshModelFromArea(); 
-    void pushUndoState();
-    void updateUndoRedoActions();
-    
-    bool saveTableFile(const QString &filePath); 
     bool loadTableFile(const QString &filePath);
-    void insertSeries(const QList<QString> &series); 
+    bool saveTableFile(const QString &filePath);
     void clearCharMappingTable();
-    
+    void insertSeries(const QList<QString> &series);
+    void refreshModelFromArea();
+
+    QMap<QChar, QList<int>> calculatePattern(const QString &text) const;
+    QList<QMap<QChar, unsigned char>> guessEncoding(const QList<KnownPhrase> &phrases, 
+                                                   quint64 start, quint64 end);
+    void addFoundMappingToTable(const QMap<QChar, unsigned char> &mapping);
+
     void createRecentFileActions();
     void loadRecentFiles();
     void updateRecentFileActions();
-    void prependToRecentFiles(const QString &filePath); 
+    void prependToRecentFiles(const QString &filePath);
+
+    void pushUndoState();
+    void pushUndoState(const EditorState &state);
+    void clearUndoRedo();
+    void updateUndoRedoActions();
+    bool maybeSave();
+    void on_actionDarkMode_triggered(bool checked);
+
+
 };
 
-#endif // HEXANDTABLER_H
+#endif  
