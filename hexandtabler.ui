@@ -57,12 +57,12 @@
     <addaction name="actionUndo"/>
     <addaction name="actionRedo"/>
     <addaction name="separator"/>
+    <addaction name="actionCopyAddress"/>
     <addaction name="actionCopy"/>
     <addaction name="actionPaste"/>
     <addaction name="separator"/>
     <addaction name="actionGoTo"/>
     <addaction name="actionFind"/>
-    <addaction name="actionSearchRelative"/>
     <addaction name="actionReplace"/>
    </widget>
    <widget class="QMenu" name="menuTable">
@@ -78,7 +78,9 @@
     <addaction name="actionClearTable"/>
     <addaction name="separator"/>
     <addaction name="actionGuessEncoding"/>
-    <addaction name="separator"/>
+    <addaction name="actionChangeEndian16"/>
+    <addaction name="actionAddRange16"/>
+    <addaction name="actionRemoveRange16"/>
     <widget class="QMenu" name="menuInsertSeries">
      <property name="title">
       <string>Insert series</string>
@@ -100,6 +102,8 @@
     <addaction name="separator"/>
     <addaction name="actionZoomIn"/>
     <addaction name="actionZoomOut"/>
+    <addaction name="separator"/>
+    <addaction name="actionClearRecentFiles"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -140,6 +144,10 @@
    <property name="text"><string>Copy</string></property>
    <property name="shortcut"><string>Ctrl+C</string></property>
   </action>
+  <action name="actionCopyAddress">
+   <property name="text"><string>Copy Address</string></property>
+   <property name="shortcut"><string>Ctrl+Shift+C</string></property>
+  </action>
   <action name="actionPaste">
    <property name="text"><string>Paste</string></property>
    <property name="shortcut"><string>Ctrl+V</string></property>
@@ -178,6 +186,11 @@
   <action name="actionClearTable">
    <property name="text"><string>Clear Table</string></property>
   </action>
+  <action name="actionChangeEndian16">
+   <property name="checkable"><bool>true</bool></property>
+   <property name="checked"><bool>false</bool></property>
+   <property name="text"><string>Change Endianness</string></property>
+  </action>
   <action name="actionGuessEncoding">
    <property name="text"><string>Guess Encoding...</string></property>
   </action>
@@ -213,6 +226,15 @@
   </action>
   <action name="actionInsertNumbers19">
    <property name="text"><string>Numbers (1-9)</string></property>
+  </action>
+  <action name="actionAddRange16">
+   <property name="text"><string>Add 16-bit Range...</string></property>
+  </action>
+  <action name="actionRemoveRange16">
+   <property name="text"><string>Remove 16-bit Range...</string></property>
+  </action>
+  <action name="actionClearRecentFiles">
+   <property name="text"><string>Clear open files list</string></property>
   </action>
  </widget>
  <resources/>

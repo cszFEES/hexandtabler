@@ -10,6 +10,8 @@
 #include <QCloseEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QKeyEvent>
+#include <QScreen>
 #include <QMap>
 #include <QFuture>
 #include <QFutureWatcher>
@@ -46,6 +48,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private slots:
     void on_actionOpen_triggered();
@@ -56,6 +59,7 @@ private slots:
     void on_actionUndo_triggered();
     void on_actionRedo_triggered();
     void on_actionCopy_triggered();
+    void on_actionCopyAddress_triggered();
     void on_actionPaste_triggered();
     void on_themeChanged(int index);
     void on_actionZoomIn_triggered();
@@ -70,6 +74,9 @@ private slots:
     void on_actionSaveTable_triggered();
     void on_actionSaveTableAs_triggered();
     void on_actionClearTable_triggered();
+    void on_actionAddRange16_triggered();
+    void on_actionRemoveRange16_triggered();
+    void on_actionChangeEndian16_triggered(bool checked);
 
     void on_actionInsertLatinUpper_triggered();
     void on_actionInsertLatinLower_triggered();
@@ -83,6 +90,7 @@ private slots:
     void handleGuessEncodingFinished();
     void handleByteEdited(qint64 offset, quint8 oldByte, quint8 newByte);
     void handleTableItemChanged(QTableWidgetItem *item);
+    void on_actionClearRecentFiles_triggered();
     void openRecentFile();
     void replaceOne();
 
@@ -101,11 +109,14 @@ private:
     bool m_isDirty = false; 
 
     QString m_charMap[256];
+    QMap<uint16_t, QString> m_charMap16;
+    bool m_table16BigEndian = false;
 
     static const int MaxRecentFiles = 10;
     QAction *recentFileActions[MaxRecentFiles];
 
     QFutureWatcher<std::optional<qsizetype>> m_findWatcher;
+    qsizetype m_lastRelSearchLen = 0;
     QFuture<QList<QMap<QChar, unsigned char>>> m_guessSearchFuture;
 
     struct ByteChange {
@@ -134,7 +145,7 @@ private:
     void findNext(const QByteArray &needle, bool caseSensitive, bool wrap, bool backwards);
     
     void findNextRelative(const QString &searchText, bool backwards);
-    void findNextRelative(const QString &searchText, bool wrap, bool backwards);
+    void findNextRelative(const QString &searchText, bool wrap, bool backwards, int tolMin = 0, int tolMax = 0);
 
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
     
@@ -148,6 +159,10 @@ private:
     bool loadTableFile(const QString &filePath);
     bool saveTableFile(const QString &filePath);
     void clearCharMappingTable();
+    void setupConversionTable16();
+    void clearCharMappingTable16();
+    void applyCharMap16ToWidget();
+    void propagateCharMaps();
     void insertSeries(const QList<QString> &series);
     void refreshModelFromArea();
 

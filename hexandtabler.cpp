@@ -5,7 +5,10 @@
 #include <QFile>
 #include <QMessageBox>
 #include <QApplication>
+#include <QClipboard>
 #include <QSettings> 
+#include <QSet>
+#include <QTimer>
 #include <QFileInfo> 
 #include <QCloseEvent>
 #include <QStyle>   
@@ -21,6 +24,8 @@
 #include <QDebug>
 #include <QFont>
 #include <QStyleHints>
+#include <QGuiApplication>
+#include <QScreen>
 #include <algorithm>
 #include <cctype> 
 #include <QSignalBlocker> 
@@ -43,7 +48,6 @@
 #include <QListWidgetItem>
 #include <QDialogButtonBox>
 
-
 #include "hexeditorarea.h" 
 
 const char organizationName[] = "FEES"; 
@@ -51,7 +55,6 @@ const char applicationName[] = "hexandtabler";
 const int MAX_UNDO_STATES = 50; 
 const int MIN_CHARS_FOR_RELATIVE_SEARCH = 3; 
 const qint16 WILD_CARD_OFFSET = SHRT_MIN; 
-
 
 class FindReplaceDialog : public QDialog
 {
@@ -69,7 +72,7 @@ public:
     QString findText() const { return findLineEdit->text(); }
     QString replaceText() const { return replaceLineEdit->text(); }
     bool isCaseSensitive() const { return caseSensitiveCheckBox->isChecked(); }
-    bool isWrapped() const { return wrapCheckBox->isChecked(); } 
+    bool isWrapped() const { return wrapCheckBox->isChecked(); }
     bool isReplaceMode() const { return replaceLineEdit->isVisible(); }
     
     SearchType searchType() const { 
@@ -117,6 +120,7 @@ private:
     QPushButton *findNextButton;
     QPushButton *replaceButton;
     QPushButton *replaceAllButton;
+
 };
 
 FindReplaceDialog::FindReplaceDialog(QWidget *parent)
@@ -148,11 +152,12 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     caseSensitiveCheckBox = new QCheckBox(tr("Case sensitive"));
     wrapCheckBox = new QCheckBox(tr("Wrap around"));
     backwardsCheckBox = new QCheckBox(tr("Search backwards"));
-    
-    QVBoxLayout *optionsLayout = new QVBoxLayout;
-    optionsLayout->addWidget(caseSensitiveCheckBox);
-    optionsLayout->addWidget(wrapCheckBox);
-    optionsLayout->addWidget(backwardsCheckBox);
+
+    QHBoxLayout *optionsRow = new QHBoxLayout;
+    optionsRow->addWidget(caseSensitiveCheckBox);
+    optionsRow->addWidget(wrapCheckBox);
+    optionsRow->addWidget(backwardsCheckBox);
+    optionsRow->addStretch();
     
     findNextButton = new QPushButton(tr("Find Next"));
     findNextButton->setDefault(true);
@@ -169,7 +174,7 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     QVBoxLayout *mainLayout = new QVBoxLayout;
     mainLayout->addLayout(formLayout);
     mainLayout->addLayout(typeLayout); 
-    mainLayout->addLayout(optionsLayout);
+    mainLayout->addLayout(optionsRow);
     mainLayout->addLayout(buttonLayout);
     setLayout(mainLayout);
     
@@ -181,7 +186,7 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     connect(findLineEdit, &QLineEdit::textEdited, [this](){
         backwardsCheckBox->setChecked(false);
     });
-    
+
     setFindMode();
     setFixedSize(sizeHint());
 }
@@ -229,14 +234,14 @@ hexandtabler::hexandtabler(QWidget *parent) :
     ui(new Ui::hexandtabler)
 {
     ui->setupUi(this);
+    statusBar()->hide();
     setWindowIcon(QIcon(":/icon.png"));
     
     m_tableWidget = new QTableWidget(this); 
     
     m_tableDock = new QDockWidget(this);
-    
+    m_tableDock->setTitleBarWidget(new QWidget()); // elimina el título completamente
     m_tableDock->setFeatures(QDockWidget::DockWidgetMovable); 
-    
     m_tableDock->setWidget(m_tableWidget);
     addDockWidget(Qt::RightDockWidgetArea, m_tableDock);
     setupConversionTable();
@@ -312,12 +317,15 @@ hexandtabler::hexandtabler(QWidget *parent) :
     on_actionDarkMode_triggered(ui->actionDarkMode->isChecked());
     
     if (hexArea) {
-        hexArea->setCharMapping(m_charMap); 
+        propagateCharMaps(); 
     } 
     
     connect(ui->actionToggleTable, &QAction::toggled, m_tableDock, &QDockWidget::setVisible);
     connect(m_tableDock, &QDockWidget::visibilityChanged, ui->actionToggleTable, &QAction::setChecked);
     
+    connect(&m_findWatcher, &QFutureWatcher<std::optional<qsizetype>>::finished,
+            this, &hexandtabler::onFindFinished);
+
     createRecentFileActions();
     loadRecentFiles();
     updateUndoRedoActions();
@@ -355,7 +363,6 @@ void hexandtabler::on_actionSave_triggered() {
     }
     saveCurrentFile();
 }
-
 
 void hexandtabler::on_actionSaveAs_triggered() {
     saveFileAs();
@@ -414,7 +421,6 @@ bool hexandtabler::saveDataToFile(const QString &filePath) {
     return true;
 }
 
-
 void hexandtabler::loadFile(const QString &filePath) {
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly)) {
@@ -423,6 +429,7 @@ void hexandtabler::loadFile(const QString &filePath) {
     }
 
     QByteArray data = file.readAll();
+    m_fileData = data;
     hexArea->setHexData(data);
     
     setCurrentFile(filePath);
@@ -468,7 +475,6 @@ void hexandtabler::on_actionAbout_triggered() {
     QMessageBox::about(this, tr("hexandtabler"), 
                        "<p>Author: FEES</p>");
 }
-
 
 void hexandtabler::on_actionDarkMode_triggered(bool checked) {
     QPalette p;
@@ -562,7 +568,6 @@ void hexandtabler::on_actionGoTo_triggered() {
         QMessageBox::warning(this, tr("Invalid Input"), tr("The input is not a valid hexadecimal number."));
     }
 }
-
 
 void hexandtabler::pushUndoState() {
     if (!hexArea) return;
@@ -709,86 +714,79 @@ void hexandtabler::on_actionSearchRelative_triggered() {
     }
 }
 
-void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool backwards) {
-    if (!hexArea || searchText.isEmpty() || m_fileData.isEmpty()) return;
+void hexandtabler::findNextRelative(const QString &searchText, bool wrap, bool backwards, int tolMin, int tolMax) {
+    if (!hexArea || searchText.isEmpty()) return;
+
+    QByteArray dataCopy = hexArea->hexData();
+    if (dataCopy.isEmpty()) return;
 
     std::vector<int16_t> offsets = calculateRelativeOffsets(searchText);
     if (offsets.empty()) return;
 
-    qsizetype totalSize = m_fileData.size();
-    int numThreads = QThread::idealThreadCount(); 
-    qsizetype chunkSize = totalSize / numThreads;
-    qsizetype overlap = static_cast<qsizetype>(offsets.size()) - 1;
+    m_lastRelSearchLen = static_cast<qsizetype>(offsets.size());
 
-    QList<QFuture<std::optional<qsizetype>>> futures;
+    if (m_findWatcher.isRunning()) {
+        m_findWatcher.cancel();
+        m_findWatcher.waitForFinished();
+    }
 
-    for (int i = 0; i < numThreads; ++i) {
-        qsizetype start = i * chunkSize;
-        qsizetype end = (i == numThreads - 1) ? totalSize : (i + 1) * chunkSize + overlap;
-        if (end > totalSize) end = totalSize;
+    qsizetype startByte = hexArea->cursorPosition() / 2;
 
-        futures.append(QtConcurrent::run([this, start, end, offsets, backwards]() -> std::optional<qsizetype> {
-            auto checkMatch = [&](qsizetype pos) {
-                if (pos + static_cast<qsizetype>(offsets.size()) > m_fileData.size()) return false;
-                int baseValue = static_cast<uint8_t>(m_fileData[pos]);
-                for (size_t j = 1; j < offsets.size(); ++j) {
-                    if (static_cast<uint8_t>(m_fileData[pos + j]) - baseValue != offsets[j]) return false;
+    m_findWatcher.setFuture(QtConcurrent::run(
+        [dataCopy, offsets, startByte, backwards, wrap]() -> std::optional<qsizetype> {
+            qsizetype dataSize = dataCopy.size();
+            qsizetype patLen = static_cast<qsizetype>(offsets.size());
+            if (patLen == 0 || dataSize < patLen) return std::nullopt;
+
+            auto checkMatch = [&](qsizetype pos) -> bool {
+                if (pos < 0 || pos + patLen > dataSize) return false;
+                int baseValue = static_cast<uint8_t>(dataCopy[pos]);
+                for (qsizetype j = 1; j < patLen; ++j) {
+                    if (static_cast<uint8_t>(dataCopy[pos + j]) - baseValue != offsets[j])
+                        return false;
                 }
                 return true;
             };
 
-            if (backwards) {
-                qsizetype searchStart = std::min<qsizetype>(end - static_cast<qsizetype>(offsets.size()), m_fileData.size() - static_cast<qsizetype>(offsets.size()));
-                for (qsizetype i = searchStart; i >= start; --i) {
+            if (!backwards) {
+                qsizetype from = startByte + 1;
+                for (qsizetype i = from; i <= dataSize - patLen; ++i) {
                     if (checkMatch(i)) return i;
                 }
+                if (wrap) {
+                    for (qsizetype i = 0; i < from && i <= dataSize - patLen; ++i) {
+                        if (checkMatch(i)) return i;
+                    }
+                }
             } else {
-                for (qsizetype i = start; i <= end - static_cast<qsizetype>(offsets.size()); ++i) {
+                qsizetype from = startByte - 1;
+                for (qsizetype i = from; i >= 0; --i) {
                     if (checkMatch(i)) return i;
+                }
+                if (wrap) {
+                    for (qsizetype i = dataSize - patLen; i > from; --i) {
+                        if (checkMatch(i)) return i;
+                    }
                 }
             }
             return std::nullopt;
-        }));
-    }
-
-    qsizetype currentPos = hexArea->cursorPosition();
-
-    m_findWatcher.setFuture(QtConcurrent::run([futures, currentPos, backwards, wrap]() -> std::optional<qsizetype> {
-        QList<qsizetype> allMatches;
-        for (auto f : futures) {
-            auto res = f.result();
-            if (res.has_value()) allMatches.append(res.value());
         }
-
-        if (allMatches.isEmpty()) return std::nullopt;
-
-        std::sort(allMatches.begin(), allMatches.end());
-
-        if (backwards) {
-            for (int i = allMatches.size() - 1; i >= 0; --i) {
-                if (allMatches[i] < currentPos) return std::optional<qsizetype>(allMatches[i]);
-            }
-            return wrap ? std::optional<qsizetype>(allMatches.last()) : std::nullopt;
-        } else {
-            for (qsizetype match : allMatches) {
-                if (match > currentPos) return std::optional<qsizetype>(match);
-            }
-            return wrap ? std::optional<qsizetype>(allMatches.first()) : std::nullopt;
-        }
-    }));
+    ));
 }
 
 void hexandtabler::findNextRelative(const QString &searchText, bool backwards) {
-    findNextRelative(searchText, true, backwards);
+    findNextRelative(searchText, true, backwards, 0, 0);
 }
 
 void hexandtabler::onFindFinished() {
     unsetCursor();
     auto result = m_findWatcher.result();
     if (result) {
-        hexArea->setCursorPosition(*result);
+        qsizetype bytePos = *result;
+        hexArea->goToOffset(bytePos);
+        hexArea->setSelection(bytePos * 2, (bytePos + m_lastRelSearchLen) * 2);
     } else {
-        statusBar()->showMessage(tr("Nothing found"), 2000);
+        QMessageBox::information(this, tr("Relative Search"), tr("Pattern not found."));
     }
 }
 
@@ -1002,12 +1000,19 @@ void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replac
     hexArea->setSelection(-1, -1);
 }
 
-
 void hexandtabler::on_actionCopy_triggered()
 {
     if (hexArea) {
         hexArea->copySelection();
     }
+}
+
+void hexandtabler::on_actionCopyAddress_triggered()
+{
+    if (!hexArea) return;
+    qint64 byteOffset = hexArea->cursorPosition() / 2;
+    QString hex = QString("%1").arg(byteOffset, 8, 16, QChar('0')).toUpper();
+    QApplication::clipboard()->setText(hex);
 }
 
 void hexandtabler::on_actionPaste_triggered()
@@ -1017,14 +1022,168 @@ void hexandtabler::on_actionPaste_triggered()
     }
 }
 
+void hexandtabler::propagateCharMaps() {
+    if (!hexArea) return;
+    hexArea->setCharMapping(m_charMap);
+    hexArea->setCharMapping16(m_charMap16, m_table16BigEndian);
+}
+
+void hexandtabler::setupConversionTable16() {
+    // 16-bit entries are appended as extra rows to m_tableWidget (rows >= 256).
+    // No extra column needed; the Hex column shows LE or BE depending on m_table16BigEndian.
+}
+
+void hexandtabler::applyCharMap16ToWidget() {
+    if (!m_tableWidget) return;
+    QSignalBlocker blocker(m_tableWidget);
+
+    // Remove all 16-bit rows (row >= 256) and rebuild
+    m_tableWidget->setRowCount(256);
+
+    for (auto it = m_charMap16.constBegin(); it != m_charMap16.constEnd(); ++it) {
+        uint16_t key = it.key();  // key is always stored as LE internally
+        QString ch   = it.value();
+        uint8_t lo = (uint8_t)(key & 0xFF);
+        uint8_t hi = (uint8_t)(key >> 8);
+
+        int row = m_tableWidget->rowCount();
+        m_tableWidget->insertRow(row);
+
+        // Col 0: hex display — LE or BE depending on endian flag; stores key in UserRole
+        QString hexStr = m_table16BigEndian
+            ? QString("%1%2").arg(hi, 2, 16, QChar('0')).arg(lo, 2, 16, QChar('0')).toUpper()
+            : QString("%1%2").arg(lo, 2, 16, QChar('0')).arg(hi, 2, 16, QChar('0')).toUpper();
+        QTableWidgetItem *hexItem = new QTableWidgetItem(hexStr);
+        hexItem->setData(Qt::UserRole, (uint)key);
+        hexItem->setFlags(hexItem->flags() & ~Qt::ItemIsEditable);
+        hexItem->setBackground(QColor(60, 80, 120, 80));
+        m_tableWidget->setItem(row, 0, hexItem);
+
+        // Col 1: assigned character (editable); stores key in UserRole+1
+        QTableWidgetItem *charItem = new QTableWidgetItem(ch);
+        charItem->setData(Qt::UserRole + 1, (uint)key);
+        charItem->setBackground(QColor(60, 80, 120, 80));
+        m_tableWidget->setItem(row, 1, charItem);
+    }
+}
+
+void hexandtabler::clearCharMappingTable16() {
+    if (!m_tableWidget) return;
+    QSignalBlocker blocker(m_tableWidget);
+    m_charMap16.clear();
+    // Remove all rows beyond the 256 8-bit rows
+    m_tableWidget->setRowCount(256);
+    propagateCharMaps();
+}
+
+void hexandtabler::on_actionChangeEndian16_triggered(bool checked) {
+    m_table16BigEndian = checked;
+    applyCharMap16ToWidget();
+    propagateCharMaps();
+}
+
+void hexandtabler::on_actionAddRange16_triggered() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Add 16-bit Range"));
+    QFormLayout *form = new QFormLayout(&dlg);
+
+    QLineEdit *startEdit = new QLineEdit("8140");
+    QLineEdit *endEdit   = new QLineEdit;
+    endEdit->setPlaceholderText(tr("leave empty for single entry"));
+
+    form->addRow(tr("Start (hex LE):"), startEdit);
+    form->addRow(tr("End (hex LE):"),   endEdit);
+
+    QDialogButtonBox *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(bb);
+
+    QTimer::singleShot(0, startEdit, [startEdit](){
+        startEdit->selectAll();
+        startEdit->setFocus();
+    });
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    bool ok1;
+    uint startVal = startEdit->text().trimmed().toUInt(&ok1, 16);
+    QString endText = endEdit->text().trimmed();
+    bool ok2 = true;
+    uint endVal = endText.isEmpty() ? startVal : endText.toUInt(&ok2, 16);
+
+    if (!ok1 || !ok2 || startVal > endVal || endVal > 0xFFFF) {
+        QMessageBox::warning(this, tr("Add Range"),
+            tr("Invalid input. Check hex values (0000–FFFF) and that start ≤ end."));
+        return;
+    }
+
+    QSignalBlocker bl(m_tableWidget);
+    for (uint v = startVal; v <= endVal; ++v) {
+        uint8_t b0 = (uint8_t)((v >> 8) & 0xFF);
+        uint8_t b1 = (uint8_t)(v & 0xFF);
+        uint16_t key = (uint16_t)((uint16_t)b1 << 8 | b0);
+        if (!m_charMap16.contains(key))
+            m_charMap16[key] = ".";
+    }
+    applyCharMap16ToWidget();
+    propagateCharMaps();
+}
+
+void hexandtabler::on_actionRemoveRange16_triggered() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Remove 16-bit Range"));
+    QFormLayout *form = new QFormLayout(&dlg);
+
+    QLineEdit *startEdit = new QLineEdit("8140");
+    QLineEdit *endEdit   = new QLineEdit("8180");
+
+    form->addRow(tr("Start (hex LE):"), startEdit);
+    form->addRow(tr("End (hex LE):"),   endEdit);
+
+    QDialogButtonBox *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    form->addRow(bb);
+
+    QTimer::singleShot(0, startEdit, [startEdit](){
+        startEdit->selectAll();
+        startEdit->setFocus();
+    });
+
+    if (dlg.exec() != QDialog::Accepted) return;
+
+    bool ok1, ok2;
+    uint startVal = startEdit->text().trimmed().toUInt(&ok1, 16);
+    uint endVal   = endEdit->text().trimmed().toUInt(&ok2, 16);
+
+    if (!ok1 || !ok2 || startVal > endVal || endVal > 0xFFFF) {
+        QMessageBox::warning(this, tr("Remove Range"),
+            tr("Invalid input. Check hex values (0000–FFFF) and that start ≤ end."));
+        return;
+    }
+
+    QSignalBlocker bl(m_tableWidget);
+    for (uint v = startVal; v <= endVal; ++v) {
+        uint8_t b0 = (uint8_t)((v >> 8) & 0xFF);
+        uint8_t b1 = (uint8_t)(v & 0xFF);
+        uint16_t key = (uint16_t)((uint16_t)b1 << 8 | b0);
+        m_charMap16.remove(key);
+    }
+    applyCharMap16ToWidget();
+    propagateCharMaps();
+}
+
 void hexandtabler::setupConversionTable() {
     if (!m_tableWidget) return;
     
     m_tableWidget->setRowCount(256); 
     m_tableWidget->setColumnCount(2); 
     m_tableWidget->setHorizontalHeaderLabels({tr("Hex"), tr("Assigned")});
+    m_tableWidget->setHorizontalHeaderLabels({tr("Hex"), tr("Assigned")});
     m_tableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     m_tableWidget->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    m_tableWidget->horizontalHeader()->setHighlightSections(false);
     m_tableWidget->verticalHeader()->setVisible(false);
     m_tableWidget->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::AnyKeyPressed);
     m_tableWidget->setSelectionBehavior(QAbstractItemView::SelectRows);
@@ -1103,9 +1262,19 @@ bool hexandtabler::saveTableFile(const QString &filePath) {
     }
 
     QTextStream out(&file);
-    
+
     for (int i = 0; i < 256; ++i) {
         out << QString("%1=%2\n").arg(i, 2, 16, QChar('0')).toUpper().arg(m_charMap[i]);
+    }
+
+    for (auto it = m_charMap16.constBegin(); it != m_charMap16.constEnd(); ++it) {
+        uint16_t key = it.key();
+        uint8_t lo = (uint8_t)(key & 0xFF);
+        uint8_t hi = (uint8_t)(key >> 8);
+        out << QString("%1%2=%3\n")
+               .arg(lo, 2, 16, QChar('0')).toUpper()
+               .arg(hi, 2, 16, QChar('0')).toUpper()
+               .arg(it.value());
     }
 
     file.close();
@@ -1122,11 +1291,10 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
 
     QTextStream in(&file);
     
-    QString newMap[256];
-    
-    for (int i = 0; i < 256; ++i) {
-        newMap[i] = m_charMap[i];
-    }
+    QString newMap8[256];
+    for (int i = 0; i < 256; ++i) newMap8[i] = m_charMap[i];
+
+    QMap<uint16_t, QString> newMap16 = m_charMap16;
     
     while (!in.atEnd()) {
         QString line = in.readLine();
@@ -1141,35 +1309,42 @@ bool hexandtabler::loadTableFile(const QString &filePath) {
         while (charStr.endsWith('\n') || charStr.endsWith('\r'))
             charStr.chop(1);
 
-        bool ok;
-        int byteValue = hexCode.toInt(&ok, 16);
+        QString displayChar = charStr.left(1);
+        if (displayChar.isEmpty()) displayChar = ".";
 
-        if (ok && byteValue >= 0 && byteValue <= 255) {
-            QString displayChar = charStr.left(1);
-            if (displayChar.isEmpty()) {
-                displayChar = ".";
+        bool ok;
+        if (hexCode.length() == 4) {
+
+            uint8_t b0 = (uint8_t)(hexCode.left(2).toUInt(&ok, 16));
+            if (!ok) continue;
+            uint8_t b1 = (uint8_t)(hexCode.right(2).toUInt(&ok, 16));
+            if (!ok) continue;
+            uint16_t key = (uint16_t)((uint16_t)b1 << 8 | b0);
+            newMap16[key] = displayChar;
+        } else if (hexCode.length() <= 2) {
+
+            int byteValue = hexCode.toInt(&ok, 16);
+            if (ok && byteValue >= 0 && byteValue <= 255) {
+                newMap8[byteValue] = displayChar;
             }
-            newMap[byteValue] = displayChar;
         }
+
     }
     file.close();
 
-    QSignalBlocker blocker(m_tableWidget);
+    QSignalBlocker blocker8(m_tableWidget);
     for (int i = 0; i < 256; ++i) {
-        m_charMap[i] = newMap[i];
-        QTableWidgetItem *item = m_tableWidget->item(i, 1); 
-        if (item) {
-            item->setText(m_charMap[i]);
-        }
-    }
-    
-    if (hexArea) {
-        hexArea->setCharMapping(m_charMap);
+        m_charMap[i] = newMap8[i];
+        QTableWidgetItem *item = m_tableWidget->item(i, 1);
+        if (item) item->setText(m_charMap[i]);
     }
 
+    m_charMap16 = newMap16;
+    applyCharMap16ToWidget();
+
+    propagateCharMaps();
     return true;
 }
-
 
 void hexandtabler::clearCharMappingTable() {
     if (!m_tableWidget) return; 
@@ -1186,7 +1361,7 @@ void hexandtabler::clearCharMappingTable() {
     }
     
     if (hexArea) { 
-        hexArea->setCharMapping(m_charMap); 
+        propagateCharMaps(); 
     }
     m_isDirty = true;
 }
@@ -1195,41 +1370,46 @@ void hexandtabler::on_actionClearTable_triggered() {
     clearCharMappingTable();
 }
 
-
 void hexandtabler::insertSeries(const QList<QString> &series) {
     if (!m_tableWidget || series.isEmpty()) return;
 
-    QModelIndexList selectedIndexes = m_tableWidget->selectionModel()->selectedIndexes(); 
+    QModelIndexList selectedIndexes = m_tableWidget->selectionModel()->selectedIndexes();
     int startRow = 0;
     if (!selectedIndexes.isEmpty()) {
         startRow = selectedIndexes.at(0).row();
         for (const QModelIndex &index : selectedIndexes) {
-            if (index.row() < startRow) {
+            if (index.row() < startRow)
                 startRow = index.row();
-            }
         }
     }
 
-    QSignalBlocker blocker(m_tableWidget); 
-    
+    QSignalBlocker blocker(m_tableWidget);
+
     for (int i = 0; i < series.size(); ++i) {
         int currentRow = startRow + i;
-        if (currentRow >= 0 && currentRow < 256) {
-            QString character = series.at(i).left(1);
-            if (character.isEmpty()) character = ".";
+        if (currentRow < 0) continue;
 
-            QTableWidgetItem *item = m_tableWidget->item(currentRow, 1); 
-            if (item) {
-                item->setText(character);
-            }
-            
+        QString character = series.at(i).left(1);
+        if (character.isEmpty()) character = ".";
+
+        QTableWidgetItem *item = m_tableWidget->item(currentRow, 1);
+        if (!item) continue;
+        item->setText(character);
+
+        if (currentRow < 256) {
+            // 8-bit entry
             m_charMap[currentRow] = character;
+        } else {
+            // 16-bit entry: key stored in UserRole+1 of col 1
+            bool ok;
+            uint16_t key = (uint16_t)item->data(Qt::UserRole + 1).toUInt(&ok);
+            if (ok)
+                m_charMap16[key] = character;
         }
     }
 
-    if (hexArea) {
-        hexArea->setCharMapping(m_charMap);
-    }
+    if (hexArea)
+        propagateCharMaps();
 }
 
 void hexandtabler::on_actionInsertLatinUpper_triggered() {
@@ -1247,7 +1427,6 @@ void hexandtabler::on_actionInsertLatinLower_triggered() {
     }
     insertSeries(series);
 }
-
 
 void hexandtabler::on_actionInsertHiragana_triggered()
 {
@@ -1327,28 +1506,31 @@ void hexandtabler::handleTableItemChanged(QTableWidgetItem *item) {
     if (!m_tableWidget || !item || item->column() != 1) {
         return;
     }
-    
+
     int row = item->row();
     QString newChar = item->text();
-
-    if (newChar.isEmpty()) {
-        newChar = ".";
-    }
-
+    if (newChar.isEmpty()) newChar = ".";
     QString finalChar = newChar.left(1);
 
-    QSignalBlocker blocker(m_tableWidget); 
-    if (item->text() != finalChar) {
+    QSignalBlocker blocker(m_tableWidget);
+    if (item->text() != finalChar)
         item->setText(finalChar);
+
+    if (row < 256) {
+        // 8-bit entry
+        m_charMap[row] = finalChar;
+    } else {
+        // 16-bit entry: key stored in UserRole+1
+        bool ok;
+        uint16_t key = (uint16_t)item->data(Qt::UserRole + 1).toUInt(&ok);
+        if (ok)
+            m_charMap16[key] = finalChar;
     }
-    
-    m_charMap[row] = finalChar;
-    
+
     if (hexArea) {
-        hexArea->setCharMapping(m_charMap);
+        propagateCharMaps();
     }
 }
-
 
 void hexandtabler::openRecentFile() {
     QAction *action = qobject_cast<QAction *>(sender());
@@ -1356,6 +1538,12 @@ void hexandtabler::openRecentFile() {
         if (maybeSave())
             loadFile(action->data().toString());
     }
+}
+
+void hexandtabler::on_actionClearRecentFiles_triggered() {
+    QSettings settings(organizationName, applicationName);
+    settings.remove("recentFiles");
+    updateRecentFileActions();
 }
 
 void hexandtabler::createRecentFileActions() {
@@ -1440,10 +1628,6 @@ void hexandtabler::prependToRecentFiles(const QString &filePath) {
 void hexandtabler::refreshModelFromArea() {
 }
 
-
-
-// --- Hex Guesser (Brute Force) Implementation ---
-
 QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) const {
     QMap<QChar, QList<int>> pattern;
     for (int i = 0; i < text.length(); ++i) {
@@ -1455,30 +1639,27 @@ QMap<QChar, QList<int>> hexandtabler::calculatePattern(const QString &text) cons
     return pattern;
 }
 
-
 QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> &phrases,
                                                      quint64 startOffset, 
-                                                     quint64 endOffset) { // <- 'backwards' removed
-    // NOTE: This function is executed in a background thread via QtConcurrent::run
-    // It must not interact with the UI.
+                                                     quint64 endOffset) {
+
     if (m_fileData.isEmpty()) return QList<QMap<QChar, quint8>>();
 
     QList<QMap<QChar, quint8>> possibleMappings;
     const QByteArray data = m_fileData; 
     
-    // Convert to qint64 for safe use with QByteArray::size() and loop counters
+
     qint64 dataSize = data.size(); 
     qint64 start = (qint64)startOffset;
-    qint64 end = (qint64)endOffset; // End offset is the last byte *index* to check (inclusive)
+    qint64 end = (qint64)endOffset;
     
-    // Sanity check of limits
+
     start = std::max((qint64)0, start);
     end = std::min(dataSize - 1, end); 
     
-    if (start > end) return QList<QMap<QChar, quint8>>(); // Invalid range
+    if (start > end) return QList<QMap<QChar, quint8>>();
     
-    // Core logic to check for a potential match and build the mapping for a given starting index 'i'
-    // This function is defined inside guessEncoding to capture the 'data' QByteArray by reference efficiently.
+
     auto checkMatchAndMap = [&](qint64 i, const KnownPhrase &phrase) -> QMap<QChar, quint8> {
         QMap<QChar, quint8> currentMapping;
         bool potentialMatch = true;
@@ -1487,10 +1668,9 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
             QChar character = it.key();
             const QList<int> &positions = it.value();
             
-            // Get the byte value from the first occurrence of the character
+
             quint8 byteValue = (quint8)data.at(i + positions.first());
 
-            // Check all other positions of this character for consistency (A-A check)
             for (int pos : positions) {
                 if ((quint8)data.at(i + pos) != byteValue) {
                     potentialMatch = false;
@@ -1500,13 +1680,12 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
             
             if (!potentialMatch) break;
 
-            // Check for character-to-byte conflict (char 'A' maps to 0x41, then to 0x42)
             if (currentMapping.contains(character) && currentMapping.value(character) != byteValue) {
                 potentialMatch = false;
                 break;
             }
             
-            // Check for byte-to-character conflict (0x41 maps to 'A', then 0x41 maps to 'B')
+
             bool byteConflict = false;
             for (quint8 existingByte : currentMapping.values()) {
                 if (existingByte == byteValue && currentMapping.key(existingByte) != character) {
@@ -1525,17 +1704,16 @@ QList<QMap<QChar, quint8>> hexandtabler::guessEncoding(const QList<KnownPhrase> 
         if (potentialMatch && !currentMapping.isEmpty()) {
             return currentMapping;
         }
-        return QMap<QChar, quint8>(); // Return empty map if no match
+        return QMap<QChar, quint8>();
     };
 
     for (const KnownPhrase &phrase : phrases) {
         int phraseLength = phrase.length;
         
-        if (end - start + 1 < phraseLength) continue; // Range is too small for the phrase
+        if (end - start + 1 < phraseLength) continue;
 
-        // Forward Search: i goes from startOffset to the last possible start index
         qint64 max_i = end - phraseLength + 1;
-        // Ensure max_i is also within file bounds
+
         max_i = std::min(max_i, dataSize - phraseLength); 
 
         for (qint64 i = start; i <= max_i; ++i) {
@@ -1556,7 +1734,7 @@ void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
 
     QSignalBlocker blocker(m_tableWidget);
     
-    // Clear existing mappings that will be overwritten (set to '.')
+
     for (int i = 0; i < 256; ++i) {
         if (mapping.values().contains(i)) {
              m_charMap[i] = ".";
@@ -1565,7 +1743,6 @@ void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
         }
     }
 
-    // Apply the new mapping
     for (auto it = mapping.constBegin(); it != mapping.constEnd(); ++it) {
         QChar character = it.key();
         quint8 byteValue = it.value();
@@ -1578,7 +1755,7 @@ void hexandtabler::addFoundMappingToTable(const QMap<QChar, quint8> &mapping) {
     }
 
     if (hexArea) {
-        hexArea->setCharMapping(m_charMap);
+        propagateCharMaps();
     }
 }
 
@@ -1609,7 +1786,7 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
     QFormLayout *formLayout = new QFormLayout;
     formLayout->addRow(tr("Known Phrases:"), phrasesEdit);
     formLayout->addRow(tr("Start Offset (Hex):"), startOffsetEdit);
-    formLayout->addRow(tr("End Offset (Hex, inclusive):"), endOffsetEdit); // User provides the last byte index
+    formLayout->addRow(tr("End Offset (Hex, inclusive):"), endOffsetEdit);
 
     mainLayout->addLayout(formLayout);
 
@@ -1665,7 +1842,6 @@ void hexandtabler::on_actionGuessEncoding_triggered() {
 
     QMessageBox::information(this, tr("Encoding Guess"), tr("Search started in the background. The selection window will appear when the results are ready."));
 }
-
 
 void hexandtabler::handleGuessEncodingFinished() {
     QList<QMap<QChar, quint8>> results = m_guessSearchFuture.result();
@@ -1752,6 +1928,30 @@ void hexandtabler::dropEvent(QDropEvent *event) {
             loadFile(filePath);
         }
     }
+}
+
+void hexandtabler::keyPressEvent(QKeyEvent *event) {
+
+    if (event->modifiers() == Qt::MetaModifier) {
+        QScreen *scr = screen() ? screen() : QGuiApplication::primaryScreen();
+        if (!scr) { QMainWindow::keyPressEvent(event); return; }
+        QRect avail = scr->availableGeometry();
+        int hw = avail.width() / 2;
+
+        if (event->key() == Qt::Key_Left) {
+            showNormal();
+            setGeometry(avail.x(), avail.y(), hw, avail.height());
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Right) {
+            showNormal();
+            setGeometry(avail.x() + hw, avail.y(), hw, avail.height());
+            event->accept();
+            return;
+        }
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 void hexandtabler::on_themeChanged(int index) {

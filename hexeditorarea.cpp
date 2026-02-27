@@ -14,6 +14,7 @@
 #include <QChar> 
 #include <QKeySequence>
 #include <QStyleOptionSlider>
+#include <QSet>
 
 HexEditorArea::HexEditorArea(QWidget *parent)
     : QAbstractScrollArea(parent),
@@ -45,6 +46,8 @@ HexEditorArea::HexEditorArea(QWidget *parent)
     
     setMouseTracking(true); 
     setFocusPolicy(Qt::StrongFocus);
+
+    viewport()->installEventFilter(this);
 }
 
 QSize HexEditorArea::minimumSizeHint() const {
@@ -60,6 +63,12 @@ void HexEditorArea::setCharMapping(const QString (&mapping)[256]) {
     for (int i = 0; i < 256; ++i) {
         m_charMap[i] = mapping[i];
     }
+    viewport()->update();
+}
+
+void HexEditorArea::setCharMapping16(const QMap<uint16_t, QString> &mapping16, bool bigEndian) {
+    m_charMap16 = mapping16;
+    m_charMap16BigEndian = bigEndian;
     viewport()->update();
 }
 
@@ -202,7 +211,7 @@ void HexEditorArea::copySelection() {
         for (int i = 0; i < selectedData.size(); ++i) {
             textToCopy += QString("%1 ").arg((unsigned char)selectedData.at(i), 2, 16, QChar('0')).toUpper();
         }
-        textToCopy = textToCopy.trimmed(); // Quita el último espacio
+        textToCopy = textToCopy.trimmed();
     } else {
         for (int i = 0; i < selectedData.size(); ++i) {
             unsigned char byte = (unsigned char)selectedData.at(i);
@@ -216,7 +225,7 @@ void HexEditorArea::copySelection() {
 
 void HexEditorArea::pasteFromClipboard() {
     QClipboard *clipboard = QApplication::clipboard();
-    const QMimeData *mimeData = clipboard->mimeData();
+    const QMimeData *mimeData = clipboard->mimeData(QClipboard::Clipboard);
     if (!mimeData) return;
 
     QByteArray dataToPaste;
@@ -226,7 +235,6 @@ void HexEditorArea::pasteFromClipboard() {
         QString text = mimeData->text();
         QByteArray tempCharMappedData;
         bool mappedSuccessfully = false;
-        
         for (int i = 0; i < text.length(); ++i) {
             QChar ch = text.at(i);
             bool found = false;
@@ -240,32 +248,32 @@ void HexEditorArea::pasteFromClipboard() {
             }
             if (!found) tempCharMappedData.append('\0');
         }
-        
         if (!mappedSuccessfully || tempCharMappedData.count('\0') == tempCharMappedData.size()) {
             QString cleanedText = text.simplified().remove(' ').remove('\n').remove('\r');
-            QByteArray hexParsedData = QByteArray::fromHex(cleanedText.toLower().toUtf8()); 
+            QByteArray hexParsedData = QByteArray::fromHex(cleanedText.toLower().toUtf8());
             dataToPaste = hexParsedData.isEmpty() ? text.toUtf8() : hexParsedData;
         } else {
             dataToPaste = tempCharMappedData;
         }
     }
+    pasteBytes(dataToPaste);
+}
 
+void HexEditorArea::pasteBytes(const QByteArray &dataToPaste) {
     if (dataToPaste.isEmpty()) return;
 
     if (m_selectionStart != -1 && m_selectionStart != m_selectionEnd) {
         int startByte = (int)(m_selectionStart / 2);
         int length = (int)(m_selectionEnd / 2) - startByte;
-        for (int i = 0; i < length && i < dataToPaste.size(); ++i) {
+        for (int i = 0; i < length && i < dataToPaste.size(); ++i)
             m_data[startByte + i] = dataToPaste.at(i);
-        }
         setCursorPosition(m_selectionEnd);
         clearSelection();
     } else {
         int insertByte = (int)(m_cursorPos / 2);
         int copySize = std::min((int)dataToPaste.size(), (int)(m_data.size() - insertByte));
-        for (int i = 0; i < copySize; ++i) {
+        for (int i = 0; i < copySize; ++i)
             m_data[insertByte + i] = dataToPaste.at(i);
-        }
         setCursorPosition((qint64)(insertByte + copySize) * 2);
     }
 
@@ -293,6 +301,43 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
         painter.setPen(pal.color(QPalette::WindowText));
         painter.drawText(0, currentY, m_charWidth * 10, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, offsetStr);
 
+        QSet<int> consumed16;
+
+        QMap<int, QString> char16AtPos;
+        if (!m_charMap16.isEmpty()) {
+            int i = 0;
+            while (i < m_bytesPerLine) {
+                int byteIndex = startByteIndex + i;
+                if (byteIndex + 1 >= totalBytes) { ++i; continue; }
+                unsigned char b0 = (unsigned char)m_data.at(byteIndex);
+                unsigned char b1 = (unsigned char)m_data.at(byteIndex + 1);
+                uint16_t key = m_charMap16BigEndian
+                    ? ((uint16_t)b0 << 8 | b1)
+                    : ((uint16_t)b1 << 8 | b0);
+                if (m_charMap16.contains(key)) {
+                    char16AtPos[i] = m_charMap16.value(key);
+                    consumed16.insert(i + 1);
+                    ++i;
+                }
+                ++i;
+            }
+        }
+
+        QSet<int> hovered16;
+        if (m_hoverByteIndex >= 0 && !m_charMap16.isEmpty()) {
+            int hi = (int)(m_hoverByteIndex - startByteIndex);
+
+            if (char16AtPos.contains(hi)) {
+                hovered16.insert(hi);
+                hovered16.insert(hi + 1);
+            }
+
+            else if (consumed16.contains(hi) && char16AtPos.contains(hi - 1)) {
+                hovered16.insert(hi - 1);
+                hovered16.insert(hi);
+            }
+        }
+
         for (int i = 0; i < m_bytesPerLine; ++i) {
             int byteIndex = startByteIndex + i;
             if (byteIndex >= totalBytes) break;
@@ -305,31 +350,59 @@ void HexEditorArea::paintEvent(QPaintEvent *event) {
             bool isSelected = (m_selectionStart != -1 && 
                             std::max(m_selectionStart, currentNibbleStart) < std::min(m_selectionEnd, currentNibbleEnd));
 
+            bool is16Pair   = char16AtPos.contains(i);
+            bool is16Second = consumed16.contains(i);
+            bool is16Hover  = hovered16.contains(i);
+
             QColor bgColor;
-            if (isSelected) {
-                bgColor = pal.color(QPalette::Highlight);
-            } else if (isCursorByte) {
-                bgColor = pal.color(QPalette::Highlight).lighter(150); 
-            } else {
-                bgColor = pal.color(QPalette::Base);
+            if (isSelected)        bgColor = pal.color(QPalette::Highlight);
+            else if (isCursorByte) bgColor = pal.color(QPalette::Highlight).lighter(150);
+            else if (is16Hover)    bgColor = pal.color(QPalette::Highlight).lighter(180);
+            else                   bgColor = pal.color(QPalette::Base);
+
+            painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY,
+                             3 * m_charWidth, m_charHeight, bgColor);
+
+            if (is16Pair) {
+
+                painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY,
+                                 2 * m_charWidth, m_charHeight, bgColor);
+            } else if (!is16Second) {
+                painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY,
+                                 m_charWidth, m_charHeight, bgColor);
             }
 
-            painter.fillRect(m_hexStartCol + i * (3 * m_charWidth), currentY, 3 * m_charWidth, m_charHeight, bgColor);
-            painter.fillRect(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, bgColor);
-            
-            if (isSelected || isCursorByte) {
+            if (isSelected || isCursorByte)
                 painter.setPen(pal.color(QPalette::HighlightedText));
-            } else {
+            else if (is16Second)
+                painter.setPen(pal.color(QPalette::WindowText).darker(150));
+            else
                 painter.setPen(pal.color(QPalette::WindowText));
+
+            {
+                int hexStart = m_hexStartCol + i * (3 * m_charWidth);
+                QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
+                painter.drawText(hexStart,              currentY, m_charWidth, m_charHeight,
+                                 Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(0));
+                painter.drawText(hexStart + m_charWidth, currentY, m_charWidth, m_charHeight,
+                                 Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(1));
             }
-            
-            int hexStart = m_hexStartCol + i * (3 * m_charWidth);
-            QString hexStr = QString("%1").arg(byte, 2, 16, QChar('0')).toUpper();
-            painter.drawText(hexStart, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(0));
-            painter.drawText(hexStart + m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, hexStr.at(1));
-            
-            QString charStr = m_charMap[byte];
-            painter.drawText(m_asciiStartCol + i * m_charWidth, currentY, m_charWidth, m_charHeight, Qt::AlignLeft | Qt::AlignVCenter, charStr);
+
+            if (is16Pair) {
+
+                QString ch16 = char16AtPos.value(i);
+                painter.drawText(m_asciiStartCol + i * m_charWidth, currentY,
+                                 2 * m_charWidth, m_charHeight,
+                                 Qt::AlignHCenter | Qt::AlignVCenter, ch16);
+            } else if (is16Second) {
+
+            } else {
+
+                QString charStr = m_charMap[byte];
+                painter.drawText(m_asciiStartCol + i * m_charWidth, currentY,
+                                 m_charWidth, m_charHeight,
+                                 Qt::AlignLeft | Qt::AlignVCenter, charStr);
+            }
         }
     }
 }
@@ -461,7 +534,13 @@ void HexEditorArea::keyPressEvent(QKeyEvent *event) {
     
     if (moved) {
         setCursorPosition(newCursorPos); 
-        if (m_selectionAnchor != -1) setSelection(m_selectionAnchor, m_cursorPos);
+        if (m_selectionAnchor != -1) {
+            // Always include both the anchor byte and the cursor byte.
+            // setSelection treats [start, end) so the larger value needs +2.
+            qint64 lo = std::min(m_selectionAnchor, m_cursorPos);
+            qint64 hi = std::max(m_selectionAnchor, m_cursorPos) + 2;
+            setSelection(lo, hi);
+        }
         return;
     }
     
@@ -497,17 +576,17 @@ void HexEditorArea::mousePressEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton) {
         qint64 byteIdx = byteIndexAt(event->pos());
         if (byteIdx != -1) {
-            qint64 newPos = byteIdx * 2; 
+            qint64 newPos = byteIdx * 2;
             m_editMode = (event->pos().x() >= m_asciiStartCol) ? AsciiMode : HexMode;
             m_currentNibbleIndex = 0;
-            setCursorPosition(newPos); 
+            setCursorPosition(newPos);
             if (!(event->modifiers() & Qt::ShiftModifier)) {
                 clearSelection();
-                m_selectionAnchor = newPos;  
-                setSelection(m_selectionAnchor, m_selectionAnchor + 2); 
+                m_selectionAnchor = newPos;
+                // Do NOT create a 1-byte selection yet; wait for drag
             } else {
                 if (m_selectionAnchor == -1) m_selectionAnchor = (m_selectionStart != -1) ? m_selectionStart : newPos;
-                setSelection(m_selectionAnchor, newPos + 2); 
+                setSelection(m_selectionAnchor, newPos + 2);
             }
         }
     }
@@ -522,15 +601,44 @@ void HexEditorArea::mouseMoveEvent(QMouseEvent *event) {
             qint64 startPos = std::min(m_selectionAnchor, currentByteStart);
             qint64 endPos = std::max(m_selectionAnchor, currentByteStart) + 2;
             setSelection(startPos, endPos);
-            m_cursorPos = endPos;
+            // Move cursor to the byte actually under the mouse, not beyond it
+            m_cursorPos = currentByteStart;
+            viewport()->update();
         }
     }
+
+    qint64 newHover = byteIndexAt(event->pos());
+    if (newHover != m_hoverByteIndex) {
+        m_hoverByteIndex = newHover;
+        viewport()->update();
+    }
+
     QAbstractScrollArea::mouseMoveEvent(event);
 }
 
 void HexEditorArea::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() == Qt::LeftButton && m_selectionStart == m_selectionEnd) clearSelection();
     QAbstractScrollArea::mouseReleaseEvent(event);
+}
+
+void HexEditorArea::leaveEvent(QEvent *event) {
+    if (m_hoverByteIndex != -1) {
+        m_hoverByteIndex = -1;
+        viewport()->update();
+    }
+    QAbstractScrollArea::leaveEvent(event);
+}
+
+bool HexEditorArea::eventFilter(QObject *obj, QEvent *event) {
+    if (obj == viewport() && event->type() == QEvent::KeyPress) {
+        QKeyEvent *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) {
+
+            keyPressEvent(ke);
+            return true;
+        }
+    }
+    return QAbstractScrollArea::eventFilter(obj, event);
 }
 
 void HexEditorArea::resizeEvent(QResizeEvent *event) {

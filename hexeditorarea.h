@@ -6,7 +6,8 @@
 #include <QFont>
 #include <QKeyEvent> 
 #include <QString> 
-#include <QMouseEvent> 
+#include <QMouseEvent>
+#include <QMap>
 
 class HexEditorArea : public QAbstractScrollArea
 {
@@ -19,6 +20,7 @@ public:
     QByteArray hexData() const;
     
     void setCharMapping(const QString (&mapping)[256]); 
+    void setCharMapping16(const QMap<uint16_t, QString> &mapping16, bool bigEndian);
     void goToOffset(qint64 offset); 
     
     qint64 byteIndexAt(const QPoint &point) const;
@@ -31,8 +33,9 @@ public:
     qint64 selectionStart() const { return m_selectionStart; } 
     qint64 selectionEnd() const { return m_selectionEnd; } 
     
-    void copySelection();                                  
+    void copySelection();
     void pasteFromClipboard();
+    void pasteBytes(const QByteArray &data);
     void clearSelection();
 
 signals:
@@ -47,6 +50,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override; 
     void resizeEvent(QResizeEvent *event) override;
     void changeEvent(QEvent *event) override;
+    void leaveEvent(QEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
     enum EditMode { HexMode, AsciiMode };
@@ -59,7 +64,9 @@ private:
     QByteArray m_data;
     qint64 m_cursorPos = 0;
     EditMode m_editMode = HexMode; 
-    QString m_charMap[256]; 
+    QString m_charMap[256];
+    QMap<uint16_t, QString> m_charMap16;
+    bool m_charMap16BigEndian = false; // false = little endian
     
     int m_charWidth = 0;
     int m_charHeight = 0;
@@ -72,6 +79,7 @@ private:
     qint64 m_selectionStart = -1;
     qint64 m_selectionEnd = -1;   
     int m_currentNibbleIndex = 0;
+    qint64 m_hoverByteIndex = -1; // byte under mouse, for 16-bit pair hover highlight
 };
 
 #endif
