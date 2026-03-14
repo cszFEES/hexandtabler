@@ -43,6 +43,7 @@ public:
     ~hexandtabler();
     
     QByteArray convertSearchString(const QString &input, int type) const;
+    void loadFile(const QString &filePath);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -52,6 +53,7 @@ protected:
 
 private slots:
     void on_actionOpen_triggered();
+    void on_actionOpenNewWindow_triggered();
     void on_actionSave_triggered();
     void on_actionSaveAs_triggered();
     void on_actionExit_triggered();
@@ -114,6 +116,7 @@ private:
 
     static const int MaxRecentFiles = 10;
     QAction *recentFileActions[MaxRecentFiles];
+    QAction *m_recentSeparator = nullptr;
 
     QFutureWatcher<std::optional<qsizetype>> m_findWatcher;
     qsizetype m_lastRelSearchLen = 0;
@@ -135,7 +138,6 @@ private:
     QList<EditorState> m_undoStack;
     QList<EditorState> m_redoStack;
 
-    void loadFile(const QString &filePath);
     void setCurrentFile(const QString &filePath);
     bool saveFileAs();
     bool saveCurrentFile();

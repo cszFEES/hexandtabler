@@ -87,14 +87,16 @@ public:
         replaceLineEdit->hide(); 
         replaceButton->hide(); 
         replaceAllButton->hide();
+        adjustSize();
     }
-    
+
     void setReplaceMode() { 
         setWindowTitle(tr("Find and Replace"));
         replaceLabel->show(); 
         replaceLineEdit->show(); 
         replaceButton->show(); 
         replaceAllButton->show();
+        adjustSize();
     }
 
 signals:
@@ -188,8 +190,10 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
     });
 
     setFindMode();
-    setFixedSize(sizeHint());
+    setMinimumWidth(500);
+    setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
 }
+
 
 void FindReplaceDialog::onFindNext() {
     emit findNextClicked(backwardsCheckBox->isChecked());
@@ -275,8 +279,13 @@ hexandtabler::hexandtabler(QWidget *parent) :
     m_findReplaceDialog = new FindReplaceDialog(this); 
     
     if (hexArea) {
-         connect(hexArea, &HexEditorArea::byteEdited, this, &hexandtabler::handleByteEdited);
-    }
+     connect(hexArea, &HexEditorArea::byteEdited, this, &hexandtabler::handleByteEdited);
+     connect(hexArea, &HexEditorArea::dataChanged, this, [this]() {
+         pushUndoState();
+         m_isDirty = true;
+         updateWindowTitle();
+     });
+}
     
     if (m_tableWidget) {
         connect(m_tableWidget, &QTableWidget::itemChanged, this, &hexandtabler::handleTableItemChanged);
@@ -433,11 +442,21 @@ void hexandtabler::loadFile(const QString &filePath) {
     hexArea->setHexData(data);
     
     setCurrentFile(filePath);
+    prependToRecentFiles(filePath);
     clearUndoRedo();
     m_isDirty = false;
     updateWindowTitle();
     
     statusBar()->showMessage(tr("File loaded: %1 bytes").arg(data.size()), 3000);
+}
+
+void hexandtabler::on_actionOpenNewWindow_triggered() {
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Open File"), "", tr("All Files (*.*)"));
+    if (filePath.isEmpty()) return;
+
+    hexandtabler *newWindow = new hexandtabler();
+    newWindow->loadFile(filePath);
+    newWindow->show();
 }
 
 void hexandtabler::setCurrentFile(const QString &filePath) {
@@ -1575,24 +1594,15 @@ void hexandtabler::loadRecentFiles() {
 void hexandtabler::updateRecentFileActions() {
     QSettings settings(organizationName, applicationName);
     QStringList files = settings.value("recentFiles").toStringList();
-    
+
     int numRecentFiles = std::min<int>(static_cast<int>(files.size()), static_cast<int>(MaxRecentFiles));
-    
-    QAction *separator = nullptr;
-    QList<QAction*> actions = ui->menuFile->actions();
-    
-    for (QAction *action : actions) {
-        if (action->isSeparator() && ui->menuFile->actions().indexOf(action) > ui->menuFile->actions().indexOf(ui->actionSaveAs)) { 
-             separator = action;
-             break;
-        }
+
+    // Crear el separador fijo la primera vez
+    if (!m_recentSeparator) {
+        m_recentSeparator = ui->menuFile->insertSeparator(ui->actionExit);
     }
 
-    if (!separator) {
-        separator = ui->menuFile->insertSeparator(ui->actionExit);
-    }
-    
-    separator->setVisible(numRecentFiles > 0);
+    m_recentSeparator->setVisible(numRecentFiles > 0);
 
     for (int i = 0; i < MaxRecentFiles; ++i) {
         ui->menuFile->removeAction(recentFileActions[i]);
@@ -1602,11 +1612,11 @@ void hexandtabler::updateRecentFileActions() {
         QString text = QString("&%1 %2")
             .arg(i + 1)
             .arg(QFileInfo(files[i]).fileName());
-        
+
         recentFileActions[i]->setText(text);
         recentFileActions[i]->setData(files[i]);
         recentFileActions[i]->setVisible(true);
-        ui->menuFile->insertAction(separator, recentFileActions[i]);
+        ui->menuFile->insertAction(m_recentSeparator, recentFileActions[i]);
     }
 }
 

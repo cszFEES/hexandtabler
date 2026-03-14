@@ -44,6 +44,7 @@
      <string>File</string>
     </property>
     <addaction name="actionOpen"/>
+    <addaction name="actionOpenNewWindow"/>
     <addaction name="separator"/>
     <addaction name="actionSave"/>
     <addaction name="actionSaveAs"/>
@@ -121,6 +122,10 @@
   <action name="actionOpen">
    <property name="text"><string>Open...</string></property>
    <property name="shortcut"><string>Ctrl+O</string></property>
+  </action>
+   <action name="actionOpenNewWindow">
+   <property name="text"><string>Open in new window...</string></property>
+   <property name="shortcut"><string>Ctrl+Shift+O</string></property>
   </action>
   <action name="actionSave">
    <property name="text"><string>Save</string></property>
@@ -216,13 +221,13 @@
    <property name="text"><string>Latin Lower (a-z)</string></property>
   </action>
   <action name="actionInsertHiragana">
-   <property name="text"><string>Hiragana</string></property>
+   <property name="text"><string>Hiragana (あ-ん)</string></property>
   </action>
   <action name="actionInsertKatakana">
-   <property name="text"><string>Katakana</string></property>
+   <property name="text"><string>Katakana (ア-ン)</string></property>
   </action>
   <action name="actionInsertCyrillic">
-   <property name="text"><string>Cyrillic</string></property>
+   <property name="text"><string>Cyrillic (А-Я)</string></property>
   </action>
   <action name="actionInsertNumbers19">
    <property name="text"><string>Numbers (1-9)</string></property>
