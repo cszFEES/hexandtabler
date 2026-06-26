@@ -64,7 +64,9 @@ public:
     enum SearchType {
         HexSearch,
         CharSearch,
-        RelativeSearch 
+        RelativeSearch,
+        Relative16LESearch,
+        Relative16BESearch
     };
 
     FindReplaceDialog(QWidget *parent = nullptr);
@@ -77,7 +79,9 @@ public:
     
     SearchType searchType() const { 
         if (hexRadioButton->isChecked()) return HexSearch;
-        if (relativeRadioButton->isChecked()) return RelativeSearch; 
+        if (relativeRadioButton->isChecked()) return RelativeSearch;
+        if (relative16LERadioButton->isChecked()) return Relative16LESearch;
+        if (relative16BERadioButton->isChecked()) return Relative16BESearch;
         return CharSearch; 
     } 
     
@@ -117,6 +121,8 @@ private:
     QRadioButton *hexRadioButton; 
     QRadioButton *charRadioButton; 
     QRadioButton *relativeRadioButton;
+    QRadioButton *relative16LERadioButton;
+    QRadioButton *relative16BERadioButton;
     
     QLabel *replaceLabel;
     QPushButton *findNextButton;
@@ -142,14 +148,18 @@ FindReplaceDialog::FindReplaceDialog(QWidget *parent)
 
     hexRadioButton = new QRadioButton(tr("Hexadecimal (FF 1A)"));
     charRadioButton = new QRadioButton(tr("Character (Table)"));
-    relativeRadioButton = new QRadioButton(tr("Relative (ADA -> 000300)")); 
+    relativeRadioButton = new QRadioButton(tr("Relative 8-bit")); 
+    relative16LERadioButton = new QRadioButton(tr("Relative 16-bit LE"));
+    relative16BERadioButton = new QRadioButton(tr("Relative 16-bit BE"));
     hexRadioButton->setChecked(true); 
 
     QHBoxLayout *typeLayout = new QHBoxLayout;
     typeLayout->addWidget(new QLabel(tr("Search Type:")));
     typeLayout->addWidget(hexRadioButton);
     typeLayout->addWidget(charRadioButton);
-    typeLayout->addWidget(relativeRadioButton); 
+    typeLayout->addWidget(relativeRadioButton);
+    typeLayout->addWidget(relative16LERadioButton);
+    typeLayout->addWidget(relative16BERadioButton);
 
     caseSensitiveCheckBox = new QCheckBox(tr("Case sensitive"));
     wrapCheckBox = new QCheckBox(tr("Wrap around"));
@@ -296,6 +306,16 @@ hexandtabler::hexandtabler(QWidget *parent) :
             
             if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch) {
                 this->findNextRelative(m_findReplaceDialog->findText(), m_findReplaceDialog->isWrapped(), backwards);
+                return;
+            }
+            
+            if (m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16LESearch) {
+                this->findNextRelative16(m_findReplaceDialog->findText(), m_findReplaceDialog->isWrapped(), backwards, false);
+                return;
+            }
+            
+            if (m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16BESearch) {
+                this->findNextRelative16(m_findReplaceDialog->findText(), m_findReplaceDialog->isWrapped(), backwards, true);
                 return;
             }
             
@@ -797,6 +817,85 @@ void hexandtabler::findNextRelative(const QString &searchText, bool backwards) {
     findNextRelative(searchText, true, backwards, 0, 0);
 }
 
+void hexandtabler::findNextRelative16(const QString &searchText, bool wrap, bool backwards, bool bigEndian) {
+    if (!hexArea || searchText.isEmpty()) return;
+
+    QByteArray dataCopy = hexArea->hexData();
+    if (dataCopy.isEmpty()) return;
+
+    // Build 16-bit offsets from unicode codepoints of the input text
+    std::vector<int32_t> offsets16;
+    offsets16.reserve(searchText.length());
+    int base16 = searchText[0].unicode();
+    for (int i = 0; i < searchText.length(); ++i) {
+        offsets16.push_back(searchText[i].unicode() - base16);
+    }
+
+    if (offsets16.empty()) return;
+
+    m_lastRelSearchLen = static_cast<qsizetype>(offsets16.size()) * 2; // 2 bytes per 16-bit value
+
+    if (m_findWatcher.isRunning()) {
+        m_findWatcher.cancel();
+        m_findWatcher.waitForFinished();
+    }
+
+    qsizetype startByte = hexArea->cursorPosition() / 2;
+
+    m_findWatcher.setFuture(QtConcurrent::run(
+        [dataCopy, offsets16, startByte, backwards, wrap, bigEndian]() -> std::optional<qsizetype> {
+            qsizetype dataSize = dataCopy.size();
+            qsizetype patLen = static_cast<qsizetype>(offsets16.size());
+            qsizetype bytePatLen = patLen * 2;
+            if (patLen == 0 || dataSize < bytePatLen) return std::nullopt;
+
+            auto readU16 = [&](qsizetype pos) -> uint16_t {
+                uint8_t b0 = static_cast<uint8_t>(dataCopy[pos]);
+                uint8_t b1 = static_cast<uint8_t>(dataCopy[pos + 1]);
+                return bigEndian ? (uint16_t)((b0 << 8) | b1)
+                                 : (uint16_t)((b1 << 8) | b0);
+            };
+
+            auto checkMatch = [&](qsizetype pos) -> bool {
+                if (pos < 0 || pos + bytePatLen > dataSize) return false;
+                int32_t baseVal = readU16(pos);
+                for (qsizetype j = 1; j < patLen; ++j) {
+                    int32_t val = readU16(pos + j * 2);
+                    if (val - baseVal != offsets16[j]) return false;
+                }
+                return true;
+            };
+
+            // Align to 2-byte boundary relative to startByte
+            qsizetype alignedStart = startByte & ~(qsizetype)1;
+
+            if (!backwards) {
+                qsizetype from = alignedStart + 2;
+                for (qsizetype i = from; i <= dataSize - bytePatLen; i += 2) {
+                    if (checkMatch(i)) return i;
+                }
+                if (wrap) {
+                    for (qsizetype i = 0; i < from && i <= dataSize - bytePatLen; i += 2) {
+                        if (checkMatch(i)) return i;
+                    }
+                }
+            } else {
+                qsizetype from = alignedStart - 2;
+                for (qsizetype i = from; i >= 0; i -= 2) {
+                    if (checkMatch(i)) return i;
+                }
+                if (wrap) {
+                    qsizetype maxPos = ((dataSize - bytePatLen) / 2) * 2;
+                    for (qsizetype i = maxPos; i > from; i -= 2) {
+                        if (checkMatch(i)) return i;
+                    }
+                }
+            }
+            return std::nullopt;
+        }
+    ));
+}
+
 void hexandtabler::onFindFinished() {
     unsetCursor();
     auto result = m_findWatcher.result();
@@ -899,7 +998,9 @@ void hexandtabler::findNext(const QByteArray &needle, bool caseSensitive, bool w
 void hexandtabler::replaceOne() {
     if (!hexArea || !m_findReplaceDialog) return;
     
-    if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch) {
+    if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch ||
+        m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16LESearch ||
+        m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16BESearch) {
         QMessageBox::warning(this, tr("Replace Error"), tr("Replace function is not available for Relative Search mode."));
         return;
     }
@@ -967,7 +1068,9 @@ void hexandtabler::replaceOne() {
 void hexandtabler::replaceAll(const QByteArray &needle, const QByteArray &replacement) {
     if (!hexArea || needle.isEmpty()) return;
     
-    if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch) {
+    if (m_findReplaceDialog->searchType() == FindReplaceDialog::RelativeSearch ||
+        m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16LESearch ||
+        m_findReplaceDialog->searchType() == FindReplaceDialog::Relative16BESearch) {
         QMessageBox::warning(this, tr("Replace Error"), tr("Replace All function is not available for Relative Search mode."));
         return;
     }
@@ -1104,19 +1207,43 @@ void hexandtabler::on_actionChangeEndian16_triggered(bool checked) {
 void hexandtabler::on_actionAddRange16_triggered() {
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Add 16-bit Range"));
-    QFormLayout *form = new QFormLayout(&dlg);
 
-    QLineEdit *startEdit = new QLineEdit("8140");
+    // ── Instrucción ──────────────────────────────────────────────────────────
+    QLabel *helpLabel = new QLabel(
+        tr("<b>Enter bytes as they appear in the file.</b><br>"
+           "Example LE: first byte <tt>A0</tt>, second byte <tt>01</tt> → write <tt>A001</tt>.<br>"
+           "Use <i>Vary first byte</i> when only the first byte of the pair changes<br>"
+           "(e.g. <tt>A001</tt> – <tt>A401</tt> → <tt>A001 A101 A201 A301 A401</tt>)."),
+        &dlg);
+    helpLabel->setWordWrap(true);
+
+    // ── Campos ───────────────────────────────────────────────────────────────
+    QFormLayout *form = new QFormLayout;
+
+    QLineEdit *startEdit = new QLineEdit("A001");
     QLineEdit *endEdit   = new QLineEdit;
-    endEdit->setPlaceholderText(tr("leave empty for single entry"));
+    endEdit->setPlaceholderText(tr("can be empty (single entry)"));
 
-    form->addRow(tr("Start (hex LE):"), startEdit);
-    form->addRow(tr("End (hex LE):"),   endEdit);
+    QCheckBox *bigEndianCheck   = new QCheckBox(tr("Big Endian"));
+    bigEndianCheck->setChecked(false);
+
+    QCheckBox *varyFirstByteCheck = new QCheckBox(
+        tr("Vary first byte only (second byte stays fixed)"));
+    varyFirstByteCheck->setChecked(false);
+
+    form->addRow(tr("Start (hex, 4 digits):"), startEdit);
+    form->addRow(tr("End   (hex, 4 digits):"), endEdit);
+    form->addRow(bigEndianCheck);
+    form->addRow(varyFirstByteCheck);
 
     QDialogButtonBox *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    form->addRow(bb);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(&dlg);
+    mainLayout->addWidget(helpLabel);
+    mainLayout->addLayout(form);
+    mainLayout->addWidget(bb);
 
     QTimer::singleShot(0, startEdit, [startEdit](){
         startEdit->selectAll();
@@ -1125,26 +1252,91 @@ void hexandtabler::on_actionAddRange16_triggered() {
 
     if (dlg.exec() != QDialog::Accepted) return;
 
+    // ── Parseo ───────────────────────────────────────────────────────────────
+    // Los 4 dígitos hex se interpretan como los dos bytes en el orden del archivo:
+    //   startEdit = "XXYY"  →  primer_byte=0xXX, segundo_byte=0xYY
     bool ok1;
     uint startVal = startEdit->text().trimmed().toUInt(&ok1, 16);
     QString endText = endEdit->text().trimmed();
     bool ok2 = true;
     uint endVal = endText.isEmpty() ? startVal : endText.toUInt(&ok2, 16);
 
-    if (!ok1 || !ok2 || startVal > endVal || endVal > 0xFFFF) {
+    if (!ok1 || !ok2 || endVal > 0xFFFF) {
         QMessageBox::warning(this, tr("Add Range"),
-            tr("Invalid input. Check hex values (0000–FFFF) and that start ≤ end."));
+            tr("Invalid input. Use 4-digit hex values (0000–FFFF)."));
         return;
     }
 
+    bool bigEndian     = bigEndianCheck->isChecked();
+    bool varyFirstByte = varyFirstByteCheck->isChecked();
+
+    // ── Función auxiliar: convierte par de bytes (en orden de archivo)
+    //    a la clave interna (siempre LE: byte0 en bits bajos).
+    //    byte0 = primer byte en el archivo, byte1 = segundo byte en el archivo.
+    auto makeKey = [](uint8_t byte0, uint8_t byte1) -> uint16_t {
+        // La clave interna almacena el PRIMER byte del archivo en los bits BAJOS.
+        return (uint16_t)((uint16_t)byte1 << 8 | byte0);
+    };
+
     QSignalBlocker bl(m_tableWidget);
-    for (uint v = startVal; v <= endVal; ++v) {
-        uint8_t b0 = (uint8_t)((v >> 8) & 0xFF);
-        uint8_t b1 = (uint8_t)(v & 0xFF);
-        uint16_t key = (uint16_t)((uint16_t)b1 << 8 | b0);
-        if (!m_charMap16.contains(key))
-            m_charMap16[key] = ".";
+
+    if (varyFirstByte) {
+        // Modo "solo varía el primer byte":
+        //   startVal = 0xXXYY → primer_byte_inicio = 0xXX, segundo_byte_fijo = 0xYY
+        //   endVal   = 0xZZYY (el segundo byte debe coincidir con el de start)
+        uint8_t byte0_start = (uint8_t)((startVal >> 8) & 0xFF);
+        uint8_t byte0_end   = (uint8_t)((endVal   >> 8) & 0xFF);
+        uint8_t byte1_fixed = (uint8_t)(startVal & 0xFF);
+
+        if ((endVal & 0xFF) != byte1_fixed) {
+            QMessageBox::warning(this, tr("Add Range"),
+                tr("In 'Vary first byte' mode, the second byte of Start and End must match.\n"
+                   "Example: Start=A001, End=A401 (both end in 01)."));
+            return;
+        }
+        if (byte0_start > byte0_end) {
+            QMessageBox::warning(this, tr("Add Range"),
+                tr("Start first byte must be ≤ End first byte."));
+            return;
+        }
+
+        for (uint8_t b0 = byte0_start; b0 <= byte0_end; ++b0) {
+            uint16_t key = makeKey(b0, byte1_fixed);
+            if (!m_charMap16.contains(key))
+                m_charMap16[key] = ".";
+        }
+    } else {
+        // Modo normal: recorre el rango numerico de pares de bytes.
+        // El valor numérico del par se incrementa tratando los dos bytes
+        // como un número de 16 bits donde el PRIMER byte es el más significativo
+        // (es decir, "A001" = 0xA001 numéricamente).
+        // El endian solo afecta cómo se interpreta el par en el archivo al hacer
+        // matching; la clave interna siempre tiene byte0_archivo en bits bajos.
+        if (startVal > endVal) {
+            QMessageBox::warning(this, tr("Add Range"),
+                tr("Start must be ≤ End."));
+            return;
+        }
+
+        for (uint v = startVal; v <= endVal; ++v) {
+            uint8_t byte0, byte1; // bytes en orden de archivo
+            if (bigEndian) {
+                // En BE el primer byte en archivo es el más significativo del valor
+                byte0 = (uint8_t)((v >> 8) & 0xFF);
+                byte1 = (uint8_t)(v & 0xFF);
+            } else {
+                // En LE el primer byte en archivo es el menos significativo del valor
+                // El usuario escribe los bytes en orden de archivo, así que
+                // "A001" significa byte0=0xA0, byte1=0x01 en el archivo.
+                byte0 = (uint8_t)((v >> 8) & 0xFF);
+                byte1 = (uint8_t)(v & 0xFF);
+            }
+            uint16_t key = makeKey(byte0, byte1);
+            if (!m_charMap16.contains(key))
+                m_charMap16[key] = ".";
+        }
     }
+
     applyCharMap16ToWidget();
     propagateCharMaps();
 }
@@ -1152,18 +1344,36 @@ void hexandtabler::on_actionAddRange16_triggered() {
 void hexandtabler::on_actionRemoveRange16_triggered() {
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Remove 16-bit Range"));
-    QFormLayout *form = new QFormLayout(&dlg);
 
-    QLineEdit *startEdit = new QLineEdit("8140");
-    QLineEdit *endEdit   = new QLineEdit("8180");
+    QLabel *helpLabel = new QLabel(
+        tr("<b>Enter bytes as they appear in the file.</b><br>"
+           "Use <i>Vary first byte</i> to remove entries where only the first byte changes."),
+        &dlg);
+    helpLabel->setWordWrap(true);
 
-    form->addRow(tr("Start (hex LE):"), startEdit);
-    form->addRow(tr("End (hex LE):"),   endEdit);
+    QFormLayout *form = new QFormLayout;
+
+    QLineEdit *startEdit = new QLineEdit("A001");
+    QLineEdit *endEdit   = new QLineEdit("A401");
+    QCheckBox *bigEndianCheck   = new QCheckBox(tr("Big Endian"));
+    bigEndianCheck->setChecked(false);
+    QCheckBox *varyFirstByteCheck = new QCheckBox(
+        tr("Vary first byte only (second byte stays fixed)"));
+    varyFirstByteCheck->setChecked(false);
+
+    form->addRow(tr("Start (hex, 4 digits):"), startEdit);
+    form->addRow(tr("End   (hex, 4 digits):"), endEdit);
+    form->addRow(bigEndianCheck);
+    form->addRow(varyFirstByteCheck);
 
     QDialogButtonBox *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-    form->addRow(bb);
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(&dlg);
+    mainLayout->addWidget(helpLabel);
+    mainLayout->addLayout(form);
+    mainLayout->addWidget(bb);
 
     QTimer::singleShot(0, startEdit, [startEdit](){
         startEdit->selectAll();
@@ -1176,19 +1386,52 @@ void hexandtabler::on_actionRemoveRange16_triggered() {
     uint startVal = startEdit->text().trimmed().toUInt(&ok1, 16);
     uint endVal   = endEdit->text().trimmed().toUInt(&ok2, 16);
 
-    if (!ok1 || !ok2 || startVal > endVal || endVal > 0xFFFF) {
+    if (!ok1 || !ok2 || endVal > 0xFFFF) {
         QMessageBox::warning(this, tr("Remove Range"),
-            tr("Invalid input. Check hex values (0000–FFFF) and that start ≤ end."));
+            tr("Invalid input. Use 4-digit hex values (0000–FFFF)."));
         return;
     }
 
+    bool varyFirstByte = varyFirstByteCheck->isChecked();
+
+    // Misma convención que AddRange16: byte0 = primer byte en archivo (bits bajos de key)
+    auto makeKey = [](uint8_t byte0, uint8_t byte1) -> uint16_t {
+        return (uint16_t)((uint16_t)byte1 << 8 | byte0);
+    };
+
     QSignalBlocker bl(m_tableWidget);
-    for (uint v = startVal; v <= endVal; ++v) {
-        uint8_t b0 = (uint8_t)((v >> 8) & 0xFF);
-        uint8_t b1 = (uint8_t)(v & 0xFF);
-        uint16_t key = (uint16_t)((uint16_t)b1 << 8 | b0);
-        m_charMap16.remove(key);
+
+    if (varyFirstByte) {
+        uint8_t byte0_start = (uint8_t)((startVal >> 8) & 0xFF);
+        uint8_t byte0_end   = (uint8_t)((endVal   >> 8) & 0xFF);
+        uint8_t byte1_fixed = (uint8_t)(startVal & 0xFF);
+
+        if ((endVal & 0xFF) != byte1_fixed) {
+            QMessageBox::warning(this, tr("Remove Range"),
+                tr("In 'Vary first byte' mode, the second byte of Start and End must match."));
+            return;
+        }
+        if (byte0_start > byte0_end) {
+            QMessageBox::warning(this, tr("Remove Range"),
+                tr("Start first byte must be ≤ End first byte."));
+            return;
+        }
+
+        for (uint8_t b0 = byte0_start; b0 <= byte0_end; ++b0)
+            m_charMap16.remove(makeKey(b0, byte1_fixed));
+
+    } else {
+        if (startVal > endVal) {
+            QMessageBox::warning(this, tr("Remove Range"), tr("Start must be ≤ End."));
+            return;
+        }
+        for (uint v = startVal; v <= endVal; ++v) {
+            uint8_t byte0 = (uint8_t)((v >> 8) & 0xFF);
+            uint8_t byte1 = (uint8_t)(v & 0xFF);
+            m_charMap16.remove(makeKey(byte0, byte1));
+        }
     }
+
     applyCharMap16ToWidget();
     propagateCharMaps();
 }
@@ -1387,6 +1630,7 @@ void hexandtabler::clearCharMappingTable() {
 
 void hexandtabler::on_actionClearTable_triggered() {
     clearCharMappingTable();
+    clearCharMappingTable16();
 }
 
 void hexandtabler::insertSeries(const QList<QString> &series) {

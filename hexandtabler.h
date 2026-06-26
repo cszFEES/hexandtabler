@@ -148,6 +148,7 @@ private:
     
     void findNextRelative(const QString &searchText, bool backwards);
     void findNextRelative(const QString &searchText, bool wrap, bool backwards, int tolMin = 0, int tolMax = 0);
+    void findNextRelative16(const QString &searchText, bool wrap, bool backwards, bool bigEndian);
 
     void replaceAll(const QByteArray &needle, const QByteArray &replacement);
     
